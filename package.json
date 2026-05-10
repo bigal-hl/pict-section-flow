@@ -1,6 +1,6 @@
 {
     "name": "pict-section-flow",
-    "version": "0.0.18",
+    "version": "0.0.19",
     "description": "Pict Section Flow Diagram",
     "main": "source/Pict-Section-Flow.js",
     "scripts": {
