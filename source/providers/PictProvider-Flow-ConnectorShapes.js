@@ -87,7 +87,7 @@ class PictProviderFlowConnectorShapes extends libFableServiceProviderBase
 				RefX: '7.5',
 				RefY: '3.5',
 				Points: '0 0, 5 3.5, 0 7',
-				Fill: '#95a5a6'
+				Fill: 'var(--theme-color-border-default, #95a5a6)'
 			},
 			'arrowhead-connection-selected':
 			{
@@ -96,7 +96,7 @@ class PictProviderFlowConnectorShapes extends libFableServiceProviderBase
 				RefX: '7.5',
 				RefY: '3.5',
 				Points: '0 0, 5 3.5, 0 7',
-				Fill: '#3498db'
+				Fill: 'var(--theme-color-status-info, #3498db)'
 			},
 			'arrowhead-tether':
 			{
@@ -105,7 +105,7 @@ class PictProviderFlowConnectorShapes extends libFableServiceProviderBase
 				RefX: '6',
 				RefY: '3',
 				Points: '0 0, 4 3, 0 6',
-				Fill: '#95a5a6'
+				Fill: 'var(--theme-color-border-default, #95a5a6)'
 			}
 		};
 
@@ -426,11 +426,11 @@ class PictProviderFlowConnectorShapes extends libFableServiceProviderBase
 		// Per-port-type connection arrowheads
 		let tmpPortTypeColors =
 		{
-			'event-in': '#3498db',
-			'event-out': '#2ecc71',
-			'setting': '#e67e22',
-			'value': '#f1c40f',
-			'error': '#e74c3c'
+			'event-in': 'var(--theme-color-status-info, #3498db)',
+			'event-out': 'var(--theme-color-status-success, #2ecc71)',
+			'setting': 'var(--theme-color-status-warning, #e67e22)',
+			'value': 'var(--theme-color-status-warning, #f1c40f)',
+			'error': 'var(--theme-color-status-error, #e74c3c)'
 		};
 
 		for (let tmpType in tmpPortTypeColors)

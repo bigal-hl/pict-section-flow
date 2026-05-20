@@ -88,13 +88,13 @@ class PictServiceFlowPortRenderer extends libFableServiceProviderBase
 				{
 					let tmpPortTypeColorMap =
 					{
-						'event-in': '#3498db',
-						'event-out': '#2ecc71',
-						'setting': '#e67e22',
-						'value': '#f1c40f',
-						'error': '#e74c3c'
+						'event-in': 'var(--theme-color-status-info, #3498db)',
+						'event-out': 'var(--theme-color-status-success, #2ecc71)',
+						'setting': 'var(--theme-color-status-warning, #e67e22)',
+						'value': 'var(--theme-color-status-warning, #f1c40f)',
+						'error': 'var(--theme-color-status-error, #e74c3c)'
 					};
-					let tmpBorderColor = tmpPort.PortType ? (tmpPortTypeColorMap[tmpPort.PortType] || '#95a5a6') : '#95a5a6';
+					let tmpBorderColor = tmpPort.PortType ? (tmpPortTypeColorMap[tmpPort.PortType] || 'var(--theme-color-border-default, #95a5a6)') : 'var(--theme-color-border-default, #95a5a6)';
 
 					let tmpBadgeHeight = 12;
 					let tmpBadgePadH = 5;

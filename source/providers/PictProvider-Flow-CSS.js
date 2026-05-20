@@ -70,13 +70,13 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 			--pf-node-selected-stroke: var(--theme-color-brand-primary, #3498db);
 
 			/* Node Variants */
-			--pf-node-start-fill: #eafaf1;
+			--pf-node-start-fill: var(--theme-color-background-hover, #eafaf1);
 			--pf-node-start-stroke: var(--theme-color-status-success, #27ae60);
-			--pf-node-end-fill: #e8f8f5;
-			--pf-node-end-stroke: #1abc9c;
-			--pf-node-halt-fill: #fdedec;
+			--pf-node-end-fill: var(--theme-color-background-hover, #e8f8f5);
+			--pf-node-end-stroke: var(--theme-color-brand-primary, #1abc9c);
+			--pf-node-halt-fill: var(--theme-color-background-hover, #fdedec);
 			--pf-node-halt-stroke: var(--theme-color-status-error, #e74c3c);
-			--pf-node-decision-fill: #fff9e6;
+			--pf-node-decision-fill: var(--theme-color-background-hover, #fff9e6);
 			--pf-node-decision-stroke: var(--theme-color-status-warning, #f39c12);
 
 			/* ── Color roles ───────────────────────────────────────
@@ -118,15 +118,15 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 			/* Port Type Colors */
 			--pf-port-event-in-fill: var(--theme-color-status-info, #3498db);
 			--pf-port-event-out-fill: var(--theme-color-status-success, #2ecc71);
-			--pf-port-setting-fill: #e67e22;
-			--pf-port-value-fill: #f1c40f;
+			--pf-port-setting-fill: var(--theme-color-status-warning, #e67e22);
+			--pf-port-value-fill: var(--theme-color-status-warning, #f1c40f);
 			--pf-port-error-fill: var(--theme-color-status-error, #e74c3c);
 
 			/* Connection Type Colors (match source port) */
 			--pf-connection-event-in-stroke: var(--theme-color-status-info, #3498db);
 			--pf-connection-event-out-stroke: var(--theme-color-status-success, #2ecc71);
-			--pf-connection-setting-stroke: #e67e22;
-			--pf-connection-value-stroke: #f1c40f;
+			--pf-connection-setting-stroke: var(--theme-color-status-warning, #e67e22);
+			--pf-connection-value-stroke: var(--theme-color-status-warning, #f1c40f);
 			--pf-connection-error-stroke: var(--theme-color-status-error, #e74c3c);
 
 			/* Connections */
@@ -161,14 +161,14 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 			--pf-button-hover-bg: var(--theme-color-background-hover, #ecf0f1);
 			--pf-button-active-bg: var(--theme-color-background-selected, #d5dbdb);
 			--pf-button-danger-text: var(--theme-color-status-error, #e74c3c);
-			--pf-button-danger-hover-bg: #fdedec;
+			--pf-button-danger-hover-bg: var(--theme-color-background-hover, #fdedec);
 			--pf-button-close-color: var(--theme-color-text-muted, #b0b8c0);
 
 			/* Badges */
 			--pf-badge-category-bg: var(--theme-color-background-tertiary, #f0f2f4);
 			--pf-badge-category-text: var(--theme-color-text-secondary, #6b7b8d);
-			--pf-badge-code-bg: #eaf2f8;
-			--pf-badge-code-text: #2980b9;
+			--pf-badge-code-bg: var(--theme-color-background-hover, #eaf2f8);
+			--pf-badge-code-text: var(--theme-color-status-info, #2980b9);
 
 			/* Info Panel */
 			--pf-port-item-bg: var(--theme-color-background-secondary, #f8f9fa);
@@ -1977,6 +1977,32 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 		{
 			this.log.warn('PictProviderFlowCSS: CSSMap not available; CSS not registered.');
 		}
+	}
+
+	/**
+	 * Register the active renderer's CSS overrides (GeometryCSS + AdditionalCSS).
+	 *
+	 * The renderer's CSS is registered at priority 501 — one higher than the
+	 * base container CSS — so its `.pict-flow-container { --pf-*: ... }`
+	 * declarations win the cascade against the equally-specific defaults in
+	 * `generateCSS()`. Called by PictView-Flow.setRenderer() after the
+	 * Flow-Renderer provider switches its active renderer.
+	 *
+	 * @param {Object} pRenderer - the active renderer definition (from PictProviderFlowRenderer)
+	 */
+	registerRendererCSS(pRenderer)
+	{
+		if (!this.fable || !this.fable.CSSMap) { return; }
+		this.fable.CSSMap.removeCSS('PictSectionFlow-Renderer-CSS');
+		if (!pRenderer) { this.fable.CSSMap.injectCSS(); return; }
+
+		let tmpCSS = '';
+		if (pRenderer.GeometryCSS)   { tmpCSS += pRenderer.GeometryCSS;   }
+		if (pRenderer.AdditionalCSS) { tmpCSS += '\n' + pRenderer.AdditionalCSS; }
+		if (tmpCSS.trim().length === 0) { this.fable.CSSMap.injectCSS(); return; }
+
+		this.fable.CSSMap.addCSS('PictSectionFlow-Renderer-CSS', tmpCSS, 501, 'PictProviderFlowCSS');
+		this.fable.CSSMap.injectCSS();
 	}
 }
 

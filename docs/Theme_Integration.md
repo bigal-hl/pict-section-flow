@@ -14,8 +14,8 @@ When a host application registers `pict-provider-theme`:
 ```javascript
 const libPictProviderTheme = require('pict-provider-theme');
 pict.addProvider('Theme', libPictProviderTheme.default_configuration, libPictProviderTheme);
-pict.providers.Theme.registerTheme(require('pict-provider-theme/source/themes/retold-default.json'));
-pict.providers.Theme.applyTheme('retold-default', 'system');
+pict.providers.Theme.registerTheme(require('pict-provider-theme/source/themes/pict-default.json'));
+pict.providers.Theme.applyTheme('pict-default', 'system');
 ```
 
 …the flow editor automatically detects it during `onBeforeInitialize` (duck-typed via `applyTheme`/`onApply`/`listThemes`) and subscribes to its `onApply` hook. On every host theme change the editor:

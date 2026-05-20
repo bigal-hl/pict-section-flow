@@ -547,7 +547,7 @@ class PictViewFlowPropertiesPanel extends libPictView
 
 		// Resolve default colors from the node type config or CSS token defaults
 		let tmpNodeTypeConfig = this._FlowView._NodeTypeProvider.getNodeType(tmpNodeData.Type);
-		let tmpDefaultTitleBarColor = '#2c3e50';
+		let tmpDefaultTitleBarColor = 'var(--theme-color-text-primary, #2c3e50)';
 		let tmpDefaultBodyFill = '#ffffff';
 		let tmpDefaultBodyStroke = '#d0d4d8';
 		if (tmpNodeTypeConfig)

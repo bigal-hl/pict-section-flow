@@ -19,7 +19,7 @@ const _DefaultNodeTypes =
 			{ Hash: null, Direction: 'output', Side: 'right', Label: 'Out' }
 		],
 		ColorRole: 'neutral',
-		TitleBarColor: '#2c3e50',
+		TitleBarColor: 'var(--theme-color-text-primary, #2c3e50)',
 		BodyStyle: {}
 	},
 	'start':
@@ -33,11 +33,11 @@ const _DefaultNodeTypes =
 			{ Hash: null, Direction: 'output', Side: 'right', Label: 'Out' }
 		],
 		ColorRole: 'success',
-		TitleBarColor: '#27ae60',
+		TitleBarColor: 'var(--theme-color-status-success, #27ae60)',
 		BodyStyle:
 		{
-			'fill': '#eafaf1',
-			'stroke': '#27ae60'
+			'fill': 'var(--theme-color-background-hover, #eafaf1)',
+			'stroke': 'var(--theme-color-status-success, #27ae60)'
 		}
 	},
 	'end':
@@ -51,11 +51,11 @@ const _DefaultNodeTypes =
 			{ Hash: null, Direction: 'input', Side: 'left', Label: 'In' }
 		],
 		ColorRole: 'accent',
-		TitleBarColor: '#1abc9c',
+		TitleBarColor: 'var(--theme-color-brand-primary, #1abc9c)',
 		BodyStyle:
 		{
 			'fill': '#e8f8f5',
-			'stroke': '#1abc9c'
+			'stroke': 'var(--theme-color-brand-primary, #1abc9c)'
 		}
 	},
 	'halt':
@@ -69,11 +69,11 @@ const _DefaultNodeTypes =
 			{ Hash: null, Direction: 'input', Side: 'left', Label: 'In' }
 		],
 		ColorRole: 'error',
-		TitleBarColor: '#e74c3c',
+		TitleBarColor: 'var(--theme-color-status-error, #e74c3c)',
 		BodyStyle:
 		{
-			'fill': '#fdedec',
-			'stroke': '#e74c3c'
+			'fill': 'var(--theme-color-background-hover, #fdedec)',
+			'stroke': 'var(--theme-color-status-error, #e74c3c)'
 		}
 	},
 	'decision':

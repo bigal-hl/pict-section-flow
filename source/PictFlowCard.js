@@ -79,7 +79,7 @@ class PictFlowCard extends libFableServiceProviderBase
 		this.cardEnabled = (typeof tmpOptions.Enabled === 'boolean') ? tmpOptions.Enabled : true;
 
 		// --- Card appearance ---
-		this.cardTitleBarColor = (tmpOptions.TitleBarColor) ? tmpOptions.TitleBarColor : '#2c3e50';
+		this.cardTitleBarColor = (tmpOptions.TitleBarColor) ? tmpOptions.TitleBarColor : 'var(--theme-color-text-primary, #2c3e50)';
 		this.cardBodyStyle = (tmpOptions.BodyStyle) ? tmpOptions.BodyStyle : {};
 		this.cardWidth = (typeof tmpOptions.Width === 'number') ? tmpOptions.Width : 180;
 		this.cardHeight = (typeof tmpOptions.Height === 'number') ? tmpOptions.Height : 80;
@@ -261,7 +261,7 @@ module.exports.default_configuration =
 	Inputs: [],
 	Outputs: [],
 	Enabled: true,
-	TitleBarColor: '#2c3e50',
+	TitleBarColor: 'var(--theme-color-text-primary, #2c3e50)',
 	BodyStyle: {},
 	Width: 180,
 	Height: 80,

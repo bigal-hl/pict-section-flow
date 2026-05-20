@@ -23,6 +23,8 @@ const libPictProviderFlowCSS = require('../providers/PictProvider-Flow-CSS.js');
 const libPictProviderFlowIcons = require('../providers/PictProvider-Flow-Icons.js');
 const libPictProviderFlowConnectorShapes = require('../providers/PictProvider-Flow-ConnectorShapes.js');
 const libPictProviderFlowTheme = require('../providers/PictProvider-Flow-Theme.js');
+const libPictProviderFlowRenderer = require('../providers/PictProvider-Flow-Renderer.js');
+const libPictProviderFlowStylePresets = require('../providers/PictProvider-Flow-StylePresets.js');
 const libPictProviderFlowNoise = require('../providers/PictProvider-Flow-Noise.js');
 
 const libPictViewFlowNode = require('./PictView-Flow-Node.js');
@@ -165,6 +167,11 @@ class PictViewFlow extends libPictView
 			{ ServiceType: 'PictProviderFlowNoise',         Library: libPictProviderFlowNoise,         Property: '_NoiseProvider',        NoFlowView: true },
 
 			// Providers (need FlowView)
+			//   Renderer + StylePresets must be created before the legacy Theme
+			//   shim (which delegates to them) and before CSS PostInit so that
+			//   registerCSS() sees an initialized renderer.
+			{ ServiceType: 'PictProviderFlowRenderer',      Library: libPictProviderFlowRenderer,      Property: '_RendererProvider' },
+			{ ServiceType: 'PictProviderFlowStylePresets',  Library: libPictProviderFlowStylePresets,  Property: '_StylePresetsProvider' },
 			{ ServiceType: 'PictProviderFlowTheme',         Library: libPictProviderFlowTheme,         Property: '_ThemeProvider' },
 			{ ServiceType: 'PictProviderFlowCSS',           Library: libPictProviderFlowCSS,           Property: '_CSSProvider',          PostInit: 'registerCSS' },
 			{ ServiceType: 'PictProviderFlowIcons',         Library: libPictProviderFlowIcons,         Property: '_IconProvider',         PostInit: 'registerIconTemplates' },
@@ -255,6 +262,8 @@ class PictViewFlow extends libPictView
 		this._IconProvider = null;
 		this._ConnectorShapesProvider = null;
 		this._ThemeProvider = null;
+		this._RendererProvider = null;
+		this._StylePresetsProvider = null;
 		this._NoiseProvider = null;
 		this._SVGHelperProvider = null;
 		this._GeometryProvider = null;
@@ -343,22 +352,39 @@ class PictViewFlow extends libPictView
 	{
 		super.onBeforeInitialize();
 
-		// Theme + Noise must be created first (CSS PostInit depends on theme state)
-		this._ThemeProvider = this.fable.instantiateServiceProviderWithoutRegistration('PictProviderFlowTheme', { FlowView: this });
-		this._NoiseProvider = this.fable.instantiateServiceProviderWithoutRegistration('PictProviderFlowNoise');
+		// Noise + Renderer + StylePresets + Theme shim must be created before
+		// CSS PostInit so registerCSS() sees an initialized renderer + presets.
+		this._NoiseProvider          = this.fable.instantiateServiceProviderWithoutRegistration('PictProviderFlowNoise');
+		this._RendererProvider       = this.fable.instantiateServiceProviderWithoutRegistration('PictProviderFlowRenderer', { FlowView: this });
+		this._StylePresetsProvider   = this.fable.instantiateServiceProviderWithoutRegistration('PictProviderFlowStylePresets', { FlowView: this });
+		this._ThemeProvider          = this.fable.instantiateServiceProviderWithoutRegistration('PictProviderFlowTheme',     { FlowView: this });
 
-		// Apply initial theme from options
-		if (this.options.Theme)
+		// Apply initial style preset / per-axis overrides from options.
+		// `Theme` and `StylePreset` are aliases for the same preset-by-hash apply.
+		let tmpInitialPreset = this.options.StylePreset || this.options.Theme;
+		if (tmpInitialPreset)
 		{
-			this._ThemeProvider.setTheme(this.options.Theme);
+			this._StylePresetsProvider.applyPreset(tmpInitialPreset);
+		}
+		if (this.options.Renderer)
+		{
+			this._RendererProvider.setRenderer(this.options.Renderer);
+			this._StylePresetsProvider.markCustomized();
 		}
 		if (typeof this.options.NoiseLevel === 'number')
 		{
-			this._ThemeProvider.setNoiseLevel(this.options.NoiseLevel);
+			this._RendererProvider.setNoiseLevel(this.options.NoiseLevel);
 		}
 
-		// Instantiate all remaining services (skips Theme + Noise since already set)
+		// Instantiate all remaining services (skips Noise/Renderer/StylePresets/Theme
+		// since already set above)
 		this._instantiateServices();
+
+		// Now that CSSProvider exists, inject the active renderer's GeometryCSS.
+		if (this._CSSProvider && typeof this._CSSProvider.registerRendererCSS === 'function')
+		{
+			this._CSSProvider.registerRendererCSS(this._RendererProvider.getActiveRenderer());
+		}
 
 		// Subscribe to the host application's pict-provider-theme so the flow
 		// editor's marker arrowhead colors and shape overrides update when the
@@ -902,89 +928,188 @@ class PictViewFlow extends libPictView
 		return this._ViewportManager.exitFullscreen();
 	}
 
-	// ── Theme API ────────────────────────────────────────────────────────
+	// ── Theme / Renderer / Style-Preset API ─────────────────────────────
+	//
+	// Three axes you can drive independently:
+	//   - ColorTheme — delegates to pict-provider-theme (a pict-section-theme
+	//                  catalog hash like 'flow-sketch' or 'pict-default')
+	//   - Renderer   — delegates to PictProviderFlowRenderer (controls
+	//                  bracket/rect node body, jitter, shadows, fonts)
+	//   - EdgeTheme  — delegates to PictService-Flow-Layout (Bezier /
+	//                  Straight / Orthogonal / Perimeter / …; see
+	//                  PictView-Flow.setEdgeTheme below)
+	//
+	// Most users pick a curated combo via `setStylePreset()` — the preset
+	// applies all three axes in order. Per-axis overrides mark the active
+	// preset as 'customized' (getStylePreset returns null afterward).
+	//
+	// For backwards-compatibility, `setTheme()` / `getThemeKey()` continue
+	// to work as aliases for `setStylePreset()` / `getStylePreset()`.
 
 	/**
-	 * Switch the active theme and re-render.
-	 * @param {string} pThemeKey - Theme key (e.g. 'default', 'sketch', 'blueprint', 'mono', 'retro-80s', 'retro-90s')
+	 * Apply a named style preset — sets ColorTheme, Renderer, EdgeTheme
+	 * (and optional NoiseLevel) in one call.
+	 * @param {string} pPresetHash
 	 */
-	setTheme(pThemeKey)
+	setStylePreset(pPresetHash)
 	{
-		if (!this._ThemeProvider)
+		if (!this._StylePresetsProvider)
 		{
-			this.log.warn('PictSectionFlow setTheme: ThemeProvider not available');
+			this.log.warn('PictSectionFlow setStylePreset: StylePresets provider not available');
 			return;
 		}
-
-		let tmpApplied = this._ThemeProvider.setTheme(pThemeKey);
-		if (!tmpApplied) return;
-
-		// Re-register CSS with the new theme overrides
-		if (this._CSSProvider)
-		{
-			this._CSSProvider.registerCSS();
-		}
-
-		// Re-inject marker defs (arrowhead colors may have changed)
-		this._reinjectMarkerDefs();
-
-		// Full re-render
-		if (this.initialRenderComplete)
-		{
-			this.renderFlow();
-		}
-
+		let tmpApplied = this._StylePresetsProvider.applyPreset(pPresetHash);
+		if (!tmpApplied) { return; }
+		this._refreshAfterStyleChange();
 		if (this._EventHandlerProvider)
 		{
-			this._EventHandlerProvider.fireEvent('onThemeChanged', pThemeKey);
+			this._EventHandlerProvider.fireEvent('onStylePresetChanged', pPresetHash);
+			// Back-compat — old code listens for 'onThemeChanged'
+			this._EventHandlerProvider.fireEvent('onThemeChanged', pPresetHash);
 		}
 	}
 
 	/**
-	 * Set the noise level (0 to 1) and re-render.
+	 * Hash of the active style preset, or null when in customized state.
+	 * @returns {string|null}
+	 */
+	getStylePreset()
+	{
+		return this._StylePresetsProvider ? this._StylePresetsProvider.getActivePresetHash() : null;
+	}
+
+	/**
+	 * Override just the color theme — delegates to pict-provider-theme.
+	 * @param {string} pThemeHash - a pict-section-theme catalog hash
+	 */
+	setColorTheme(pThemeHash)
+	{
+		if (this.fable.providers && this.fable.providers.Theme)
+		{
+			try { this.fable.providers.Theme.applyTheme(pThemeHash); }
+			catch (pErr) { this.log.warn(`PictSectionFlow setColorTheme: applyTheme failed — ${pErr.message}`); return; }
+		}
+		else
+		{
+			this.log.warn('PictSectionFlow setColorTheme: pict-provider-theme not available in host');
+			return;
+		}
+		if (this._StylePresetsProvider) { this._StylePresetsProvider.markCustomized(); }
+		this._refreshAfterStyleChange();
+		if (this._EventHandlerProvider)
+		{
+			this._EventHandlerProvider.fireEvent('onColorThemeChanged', pThemeHash);
+		}
+	}
+
+	/**
+	 * The active color theme hash (from pict-provider-theme).
+	 * @returns {string|null}
+	 */
+	getColorThemeKey()
+	{
+		if (this.fable.providers && this.fable.providers.Theme && typeof this.fable.providers.Theme.getActiveTheme === 'function')
+		{
+			let tmpActive = this.fable.providers.Theme.getActiveTheme();
+			if (tmpActive && tmpActive.Hash) { return tmpActive.Hash; }
+		}
+		return null;
+	}
+
+	/**
+	 * Override just the renderer — controls node body shape, jitter, shadows.
+	 * @param {string} pRendererKey
+	 */
+	setRenderer(pRendererKey)
+	{
+		if (!this._RendererProvider)
+		{
+			this.log.warn('PictSectionFlow setRenderer: Renderer provider not available');
+			return;
+		}
+		let tmpApplied = this._RendererProvider.setRenderer(pRendererKey);
+		if (!tmpApplied) { return; }
+		if (this._StylePresetsProvider) { this._StylePresetsProvider.markCustomized(); }
+		this._refreshAfterStyleChange();
+		if (this._EventHandlerProvider)
+		{
+			this._EventHandlerProvider.fireEvent('onRendererChanged', pRendererKey);
+		}
+	}
+
+	/**
+	 * The active renderer key.
+	 * @returns {string}
+	 */
+	getRendererKey()
+	{
+		return this._RendererProvider ? this._RendererProvider.getActiveRendererKey() : 'clean';
+	}
+
+	/**
+	 * Set the noise level (0 to 1) and re-render. Noise applies only when
+	 * the active renderer enables it (see Renderer.NoiseConfig).
 	 * @param {number} pLevel - 0 = precise, 1 = maximum wobble
 	 */
 	setNoiseLevel(pLevel)
 	{
-		if (!this._ThemeProvider)
+		if (this._RendererProvider)
 		{
-			this.log.warn('PictSectionFlow setNoiseLevel: ThemeProvider not available');
-			return;
+			this._RendererProvider.setNoiseLevel(pLevel);
 		}
-
-		this._ThemeProvider.setNoiseLevel(pLevel);
-
-		// Full re-render to apply new noise
-		if (this.initialRenderComplete)
+		else if (this._ThemeProvider)
 		{
-			this.renderFlow();
+			this._ThemeProvider.setNoiseLevel(pLevel);
 		}
+		if (this.initialRenderComplete) { this.renderFlow(); }
 	}
 
 	/**
-	 * Get the current noise level (0 to 1).
+	 * Current noise level (0 to 1).
 	 * @returns {number}
 	 */
 	getNoiseLevel()
 	{
-		if (this._ThemeProvider)
-		{
-			return this._ThemeProvider.getNoiseLevel();
-		}
+		if (this._RendererProvider) { return this._RendererProvider.getNoiseLevel(); }
+		if (this._ThemeProvider)    { return this._ThemeProvider.getNoiseLevel(); }
 		return 0;
 	}
 
 	/**
-	 * Get the active theme key.
-	 * @returns {string}
+	 * @deprecated since the 3-axis refactor — use setStylePreset() instead.
+	 * Kept as an alias for back-compat with existing host apps and views.
+	 * @param {string} pPresetHash
+	 */
+	setTheme(pPresetHash)
+	{
+		this.setStylePreset(pPresetHash);
+	}
+
+	/**
+	 * @deprecated since the 3-axis refactor — use getStylePreset() instead.
+	 * Returns the active preset hash (or null if customized).
+	 * @returns {string|null}
 	 */
 	getThemeKey()
 	{
-		if (this._ThemeProvider)
+		return this.getStylePreset();
+	}
+
+	/**
+	 * Common refresh path used by all axis-change methods.
+	 * Re-registers the renderer CSS, re-injects marker defs (arrowhead colors
+	 * may have shifted with the new theme), and full-renders the flow.
+	 * @private
+	 */
+	_refreshAfterStyleChange()
+	{
+		if (this._CSSProvider && typeof this._CSSProvider.registerRendererCSS === 'function' && this._RendererProvider)
 		{
-			return this._ThemeProvider.getActiveThemeKey();
+			this._CSSProvider.registerRendererCSS(this._RendererProvider.getActiveRenderer());
 		}
-		return 'default';
+		if (this._CSSProvider) { this._CSSProvider.registerCSS(); }
+		this._reinjectMarkerDefs();
+		if (this.initialRenderComplete) { this.renderFlow(); }
 	}
 
 	_reinjectMarkerDefs() { return this._RenderManager.reinjectMarkerDefs(); }

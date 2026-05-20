@@ -15,13 +15,13 @@ const _CHIP_PER_CHAR_PX  = 5;
 // badge borders so the hint bezier matches its port's affinity color.
 const PORT_TYPE_COLORS =
 {
-	'event-in':  '#3498db',
-	'event-out': '#2ecc71',
-	'setting':   '#e67e22',
-	'value':     '#f1c40f',
-	'error':     '#e74c3c'
+	'event-in':  'var(--theme-color-status-info, #3498db)',
+	'event-out': 'var(--theme-color-status-success, #2ecc71)',
+	'setting':   'var(--theme-color-status-warning, #e67e22)',
+	'value':     'var(--theme-color-status-warning, #f1c40f)',
+	'error':     'var(--theme-color-status-error, #e74c3c)'
 };
-const PORT_TYPE_DEFAULT_COLOR = '#95a5a6';
+const PORT_TYPE_DEFAULT_COLOR = 'var(--theme-color-border-default, #95a5a6)';
 
 class PictServiceFlowConnectionRenderer extends libFableServiceProviderBase
 {

@@ -239,7 +239,7 @@ class PictViewFlowNode extends libPictView
 					tmpCodeText.setAttribute('class', 'pict-flow-node-card-code');
 					tmpCodeText.setAttribute('font-size', '10');
 					tmpCodeText.setAttribute('font-family', 'monospace');
-					tmpCodeText.setAttribute('fill', '#7f8c8d');
+					tmpCodeText.setAttribute('fill', 'var(--theme-color-text-secondary, #7f8c8d)');
 					tmpCodeText.setAttribute('text-anchor', 'middle');
 					tmpCodeText.setAttribute('dominant-baseline', 'central');
 					tmpCodeText.setAttribute('pointer-events', 'none');

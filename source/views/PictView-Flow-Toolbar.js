@@ -1500,30 +1500,36 @@ class PictViewFlowToolbar extends libPictView
 	 */
 	_buildSettingsPopup(pContainer)
 	{
-		if (!this._FlowView || !this._FlowView._ThemeProvider) return;
+		if (!this._FlowView) return;
 
 		let tmpFlowViewIdentifier = this.options.FlowViewIdentifier;
-		let tmpThemeProvider = this._FlowView._ThemeProvider;
-		let tmpThemeKeys = tmpThemeProvider.getThemeKeys();
-		let tmpActiveKey = tmpThemeProvider.getActiveThemeKey();
+		let tmpPresetsProvider = this._FlowView._StylePresetsProvider;
+		let tmpRendererProvider = this._FlowView._RendererProvider;
+		if (!tmpPresetsProvider || !tmpRendererProvider) return;
+
+		// The single "Style" picker surfaces curated presets — each one bundles
+		// a ColorTheme + Renderer + EdgeTheme. Per-axis overrides live behind
+		// future "Customize" UI; the toolbar shows the preset list only.
+		let tmpPresets = tmpPresetsProvider.listPresets();
+		let tmpActivePreset = tmpPresetsProvider.getActivePresetHash();
 
 		let tmpThemeOptions = [];
-		for (let i = 0; i < tmpThemeKeys.length; i++)
+		for (let i = 0; i < tmpPresets.length; i++)
 		{
-			let tmpTheme = tmpThemeProvider._Themes[tmpThemeKeys[i]];
+			let tmpPreset = tmpPresets[i];
 			tmpThemeOptions.push(
 			{
-				Value: tmpThemeKeys[i],
-				Label: tmpTheme.Label || tmpThemeKeys[i],
-				SelectedAttr: (tmpThemeKeys[i] === tmpActiveKey) ? ' selected="selected"' : ''
+				Value: tmpPreset.Hash,
+				Label: tmpPreset.Label || tmpPreset.Hash,
+				SelectedAttr: (tmpPreset.Hash === tmpActivePreset) ? ' selected="selected"' : ''
 			});
 		}
 
 		let tmpThemeOptionsHTML = this.pict.parseTemplateByHash('Flow-Layout-OptionList', { Options: tmpThemeOptions });
 
-		let tmpNoiseLevel = Math.round(tmpThemeProvider.getNoiseLevel() * 100);
-		let tmpActiveTheme = tmpThemeProvider.getActiveTheme();
-		let tmpNoiseEnabled = !!(tmpActiveTheme && tmpActiveTheme.NoiseConfig && tmpActiveTheme.NoiseConfig.Enabled);
+		let tmpNoiseLevel = Math.round(tmpRendererProvider.getNoiseLevel() * 100);
+		let tmpActiveRenderer = tmpRendererProvider.getActiveRenderer();
+		let tmpNoiseEnabled = !!(tmpActiveRenderer && tmpActiveRenderer.NoiseConfig && tmpActiveRenderer.NoiseConfig.Enabled);
 		let tmpNoiseDisplay = tmpNoiseEnabled ? '' : 'display:none;';
 
 		this.pict.ContentAssignment.assignContent(pContainer,
@@ -1585,16 +1591,18 @@ class PictViewFlowToolbar extends libPictView
 		let tmpNoiseSection = pContainer.querySelector('[data-settings-type="noise"]');
 		if (!tmpNoiseSection) return;
 
-		let tmpTheme = this._FlowView._ThemeProvider.getActiveTheme();
-		if (tmpTheme && tmpTheme.NoiseConfig && tmpTheme.NoiseConfig.Enabled)
+		let tmpRendererProvider = this._FlowView._RendererProvider;
+		if (!tmpRendererProvider) { tmpNoiseSection.style.display = 'none'; return; }
+		let tmpRenderer = tmpRendererProvider.getActiveRenderer();
+		if (tmpRenderer && tmpRenderer.NoiseConfig && tmpRenderer.NoiseConfig.Enabled)
 		{
 			tmpNoiseSection.style.display = '';
-			// Update slider value to reflect theme default
+			// Update slider value to reflect renderer default
 			let tmpSlider = tmpNoiseSection.querySelector('.pict-flow-popup-settings-slider');
 			let tmpValueLabel = tmpNoiseSection.querySelector('.pict-flow-popup-settings-slider-value');
 			if (tmpSlider)
 			{
-				let tmpLevel = Math.round(this._FlowView._ThemeProvider.getNoiseLevel() * 100);
+				let tmpLevel = Math.round(tmpRendererProvider.getNoiseLevel() * 100);
 				tmpSlider.value = String(tmpLevel);
 				if (tmpValueLabel) tmpValueLabel.textContent = tmpLevel + '%';
 			}
