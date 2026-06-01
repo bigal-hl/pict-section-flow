@@ -1,5 +1,7 @@
 # Pict-Section-Flow
 
+> **[Read the Pict-Section-Flow Documentation](https://fable-retold.github.io/pict-section-flow/)**
+
 [pict-section-flow on npm](https://www.npmjs.com/package/pict-section-flow) | [MIT License](LICENSE)
 
 An interactive flow diagram section view for the Pict application framework. Build node-based visual editors, workflow designers, and data pipeline tools with a declarative, configuration-driven API.
