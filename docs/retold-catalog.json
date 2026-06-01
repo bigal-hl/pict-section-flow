@@ -1,5 +1,5 @@
 {
-	"Generated": "2026-05-26T21:13:23.675Z",
+	"Generated": "2026-06-01T03:47:29.435Z",
 	"Mode": "module",
 	"GitHubOrg": "fable-retold",
 	"DefaultBranch": "master",
@@ -223,7 +223,9 @@
 			"card-help/SW.md",
 			"examples/README.md",
 			"examples/simple_cards/README.md",
+			"examples/simple_cards/css/flowexample.css",
 			"examples/simple_cards/index.html",
+			"examples/simple_cards/js/pict.min.js",
 			"examples/simple_cards/pict-section-flow-example-simple-cards.compatible.min.js",
 			"index.html",
 			"playground/app.json",
