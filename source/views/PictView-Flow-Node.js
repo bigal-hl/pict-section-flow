@@ -86,6 +86,13 @@ class PictViewFlowNode extends libPictView
 		pNodeData.Width = tmpWidth;
 		pNodeData.Height = tmpHeight;
 
+		// Optional rotation (degrees) about the node's center. Applied on top of the position
+		// translate so free-form canvases can tilt a card; zero / unset leaves it axis-aligned.
+		if (typeof pNodeData.Rotation === 'number' && pNodeData.Rotation)
+		{
+			tmpGroup.setAttribute('transform', PictViewFlowNode.nodeTransform(pNodeData.X, pNodeData.Y, pNodeData.Rotation, tmpWidth, tmpHeight));
+		}
+
 		// Determine node body mode from theme (bracket vs rect)
 		let tmpNodeBodyMode = 'rect';
 		if (this._FlowView._ThemeProvider)
@@ -160,8 +167,10 @@ class PictViewFlowNode extends libPictView
 				tmpGroup.appendChild(tmpTypeLabel);
 			}
 
-			// FlowCard metadata: icon in title bar, code badge in body (hover-only via CSS)
-			if (pNodeTypeConfig && pNodeTypeConfig.CardMetadata)
+			// FlowCard metadata: icon in title bar, code badge in body (hover-only via CSS). Skip the
+			// title icon entirely when there is no title bar (height 0), e.g. edge-to-edge moodboard
+			// cards, otherwise the default fallback glyph paints in the card's top-left corner.
+			if (pNodeTypeConfig && pNodeTypeConfig.CardMetadata && tmpTitleBarHeight > 0)
 			{
 				let tmpMeta = pNodeTypeConfig.CardMetadata;
 				let tmpIconProvider = this._FlowView._IconProvider;
@@ -310,6 +319,24 @@ class PictViewFlowNode extends libPictView
 			tmpIndicator.appendChild(tmpIndicatorTitle);
 
 			tmpGroup.appendChild(tmpIndicator);
+		}
+
+		// Resize handle: a small grip at the bottom-right corner, shown only when this node is
+		// selected and the flow allows node resizing. Its data-element-type routes pointer-down to
+		// the InteractionManager's node-resize path. Appended last so it paints over the body.
+		if (pIsSelected && this._FlowView.options && this._FlowView.options.EnableNodeResizing)
+		{
+			let tmpHandleSize = 14;
+			let tmpHandle = this._FlowView._SVGHelperProvider.createSVGElement('rect');
+			tmpHandle.setAttribute('class', 'pict-flow-node-resize-handle');
+			tmpHandle.setAttribute('x', String(tmpWidth - (tmpHandleSize - 4)));
+			tmpHandle.setAttribute('y', String(tmpHeight - (tmpHandleSize - 4)));
+			tmpHandle.setAttribute('width', String(tmpHandleSize));
+			tmpHandle.setAttribute('height', String(tmpHandleSize));
+			tmpHandle.setAttribute('rx', '3');
+			tmpHandle.setAttribute('data-node-hash', pNodeData.Hash);
+			tmpHandle.setAttribute('data-element-type', 'node-resize');
+			tmpGroup.appendChild(tmpHandle);
 		}
 
 		pNodesLayer.appendChild(tmpGroup);
@@ -554,6 +581,26 @@ class PictViewFlowNode extends libPictView
 	{
 		let tmpRadius = (typeof pCornerRadius === 'number') ? pCornerRadius : 0;
 		return Math.min(Math.max(8, tmpRadius), Math.floor(pTitleBarHeight / 2));
+	}
+
+	/**
+	 * The SVG group transform for a node: a position translate, plus a rotation about the node's
+	 * center when a non-zero rotation (degrees) is given.
+	 * @param {number} pX
+	 * @param {number} pY
+	 * @param {number} pRotation - degrees; 0 / non-number means no rotation
+	 * @param {number} pWidth
+	 * @param {number} pHeight
+	 * @returns {string}
+	 */
+	static nodeTransform(pX, pY, pRotation, pWidth, pHeight)
+	{
+		let tmpRotation = (typeof pRotation === 'number') ? pRotation : 0;
+		if (!tmpRotation)
+		{
+			return `translate(${pX}, ${pY})`;
+		}
+		return `translate(${pX}, ${pY}) rotate(${tmpRotation} ${pWidth / 2} ${pHeight / 2})`;
 	}
 
 	_renderRectNodeBody(pGroup, pNodeData, pWidth, pHeight, pTitleBarHeight, pNodeTypeConfig)

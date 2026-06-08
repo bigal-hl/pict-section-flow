@@ -63,7 +63,9 @@ class PictServiceFlowRenderManager extends libFableServiceProviderBase
 		for (let i = 0; i < this._FlowView._FlowData.Nodes.length; i++)
 		{
 			let tmpNode = this._FlowView._FlowData.Nodes[i];
-			let tmpIsSelected = (this._FlowView._FlowData.ViewState.SelectedNodeHash === tmpNode.Hash);
+			let tmpSelectedSet = this._FlowView._FlowData.ViewState.SelectedNodeHashes;
+			let tmpIsSelected = (this._FlowView._FlowData.ViewState.SelectedNodeHash === tmpNode.Hash)
+				|| (Array.isArray(tmpSelectedSet) && tmpSelectedSet.indexOf(tmpNode.Hash) >= 0);
 			let tmpNodeTypeConfig = this._FlowView._NodeTypeProvider.getNodeType(tmpNode.Type);
 
 			// Enrich saved port data with metadata from the node type's DefaultPorts.

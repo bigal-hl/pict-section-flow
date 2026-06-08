@@ -46,4 +46,21 @@ function ()
 			}
 		});
 	});
+
+	suite('nodeTransform',
+	function ()
+	{
+		test('a zero / absent rotation is a plain position translate',
+		function ()
+		{
+			libExpect(libPictViewFlowNode.nodeTransform(40, 60, 0, 100, 80)).to.equal('translate(40, 60)');
+			libExpect(libPictViewFlowNode.nodeTransform(40, 60, null, 100, 80)).to.equal('translate(40, 60)');
+		});
+
+		test('a non-zero rotation rotates about the node center',
+		function ()
+		{
+			libExpect(libPictViewFlowNode.nodeTransform(40, 60, 15, 100, 80)).to.equal('translate(40, 60) rotate(15 50 40)');
+		});
+	});
 });

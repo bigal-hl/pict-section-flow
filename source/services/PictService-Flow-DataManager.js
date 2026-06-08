@@ -106,7 +106,7 @@ class PictServiceFlowDataManager extends libFableServiceProviderBase
 			OpenPanels: Array.isArray(pFlowData.OpenPanels) ? pFlowData.OpenPanels : [],
 			SavedLayouts: Array.isArray(pFlowData.SavedLayouts) ? pFlowData.SavedLayouts : [],
 			ViewState: Object.assign(
-				{ PanX: 0, PanY: 0, Zoom: 1, SelectedNodeHash: null, SelectedConnectionHash: null, SelectedTetherHash: null },
+				{ PanX: 0, PanY: 0, Zoom: 1, SelectedNodeHash: null, SelectedNodeHashes: [], SelectedConnectionHash: null, SelectedTetherHash: null },
 				pFlowData.ViewState || {}
 			),
 			LayoutAlgorithm: (typeof pFlowData.LayoutAlgorithm === 'string' && pFlowData.LayoutAlgorithm !== '') ? pFlowData.LayoutAlgorithm : tmpDefaultAlgorithm,

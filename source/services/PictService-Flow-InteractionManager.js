@@ -11,7 +11,9 @@ const INTERACTION_STATES =
 	DRAGGING_HANDLE: 'dragging-handle',
 	CONNECTING: 'connecting',
 	PANNING: 'panning',
-	RESIZING_PANEL: 'resizing-panel'
+	RESIZING_PANEL: 'resizing-panel',
+	RESIZING_NODE: 'resizing-node',
+	MARQUEE: 'marquee'
 };
 
 class PictServiceFlowInteractionManager extends libFableServiceProviderBase
@@ -70,6 +72,13 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		this._ResizePanelHash = null;
 		this._ResizeStartY = 0;
 		this._ResizePanelStartHeight = 0;
+
+		// Node resize state (drag a node's bottom-right handle to set Width/Height)
+		this._ResizeNodeHash = null;
+		this._ResizeNodeStartX = 0;
+		this._ResizeNodeStartY = 0;
+		this._ResizeNodeStartWidth = 0;
+		this._ResizeNodeStartHeight = 0;
 
 		// Double-click detection for connections
 		this._LastConnectionClickTime = 0;
@@ -196,6 +205,15 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 				let tmpNodeHash = this._getNodeHash(tmpTarget);
 				let tmpNow = Date.now();
 
+				// Shift-click toggles this node in the multi-selection (no drag, no panel).
+				if (tmpNodeHash && this._FlowView.options.EnableMultiSelect && pEvent.shiftKey)
+				{
+					this._LastClickTime = 0;
+					this._LastClickNodeHash = null;
+					this._FlowView.toggleNodeSelection(tmpNodeHash);
+					break;
+				}
+
 				// Check for double-click on same node
 				if (tmpNodeHash && tmpNodeHash === this._LastClickNodeHash
 					&& (tmpNow - this._LastClickTime) < this._DoubleClickThreshold)
@@ -221,6 +239,10 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 
 			case 'panel-resize':
 				this._startPanelResize(pEvent, tmpTarget);
+				break;
+
+			case 'node-resize':
+				this._startNodeResize(pEvent, tmpTarget);
 				break;
 
 			case 'panel-close':
@@ -343,10 +365,19 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			}
 
 			default:
-				// Click on background - start panning or deselect
-				if (pEvent.button === 0 && this._FlowView.options.EnablePanning)
+				// Click / drag on the empty background.
+				if (pEvent.button === 0)
 				{
-					this._startPanning(pEvent);
+					if (this._FlowView.options.EnableMultiSelect && !pEvent.shiftKey)
+					{
+						// Plain drag marquee-selects; a click (no drag) clears the selection on release.
+						this._startMarquee(pEvent);
+					}
+					else if (this._FlowView.options.EnablePanning)
+					{
+						// With multi-select on, shift+drag pans; otherwise this is the normal pan.
+						this._startPanning(pEvent);
+					}
 				}
 				break;
 		}
@@ -382,8 +413,16 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 				this._onPanelResize(pEvent);
 				break;
 
+			case INTERACTION_STATES.RESIZING_NODE:
+				this._onNodeResize(pEvent);
+				break;
+
 			case INTERACTION_STATES.PANNING:
 				this._onPan(pEvent);
+				break;
+
+			case INTERACTION_STATES.MARQUEE:
+				this._onMarquee(pEvent);
 				break;
 		}
 	}
@@ -420,12 +459,20 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 				this._endPanelResize(pEvent);
 				break;
 
+			case INTERACTION_STATES.RESIZING_NODE:
+				this._endNodeResize(pEvent);
+				break;
+
 			case INTERACTION_STATES.CONNECTING:
 				this._endConnection(pEvent);
 				break;
 
 			case INTERACTION_STATES.PANNING:
 				this._endPanning(pEvent);
+				break;
+
+			case INTERACTION_STATES.MARQUEE:
+				this._endMarquee(pEvent);
 				break;
 		}
 	}
@@ -513,63 +560,208 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		let tmpNodeHash = this._getNodeHash(pTarget);
 		if (!tmpNodeHash) return;
 
-		this._FlowView.selectNode(tmpNodeHash);
+		// If the grabbed node is part of a multi-selection, drag the whole set; otherwise select just
+		// it. (Grabbing a node outside the current selection collapses to that single node.)
+		let tmpSelected = this._FlowView.getSelectedNodeHashes ? this._FlowView.getSelectedNodeHashes() : [];
+		let tmpIsMulti = this._FlowView.options.EnableMultiSelect && tmpSelected.length > 1 && tmpSelected.indexOf(tmpNodeHash) >= 0;
+		if (!tmpIsMulti)
+		{
+			this._FlowView.selectNode(tmpNodeHash);
+			tmpSelected = [tmpNodeHash];
+		}
 
-		let tmpNode = this._FlowView.getNode(tmpNodeHash);
-		if (!tmpNode) return;
+		// Capture each dragged node's start position so one delta applies to all of them.
+		this._DragNodes = [];
+		for (let i = 0; i < tmpSelected.length; i++)
+		{
+			let tmpN = this._FlowView.getNode(tmpSelected[i]);
+			if (tmpN) { this._DragNodes.push({ Hash: tmpN.Hash, StartX: tmpN.X, StartY: tmpN.Y }); }
+		}
+		if (this._DragNodes.length === 0) return;
 
 		this._State = INTERACTION_STATES.DRAGGING_NODE;
 		this._DragNodeHash = tmpNodeHash;
 		this._DragStartX = pEvent.clientX;
 		this._DragStartY = pEvent.clientY;
-		this._DragNodeStartX = tmpNode.X;
-		this._DragNodeStartY = tmpNode.Y;
 
 		this._SVGElement.classList.add('panning');
 
-		let tmpNodeGroup = this._FlowView._NodesLayer.querySelector(`[data-node-hash="${tmpNodeHash}"]`);
-		if (tmpNodeGroup)
+		for (let i = 0; i < this._DragNodes.length; i++)
 		{
-			tmpNodeGroup.classList.add('dragging');
+			let tmpNodeGroup = this._FlowView._NodesLayer.querySelector(`[data-node-hash="${this._DragNodes[i].Hash}"]`);
+			if (tmpNodeGroup) { tmpNodeGroup.classList.add('dragging'); }
 		}
 	}
 
 	_onNodeDrag(pEvent)
 	{
-		if (!this._DragNodeHash) return;
+		if (!this._DragNodes || this._DragNodes.length === 0) return;
 
 		let tmpVS = this._FlowView.viewState;
 		let tmpDX = (pEvent.clientX - this._DragStartX) / tmpVS.Zoom;
 		let tmpDY = (pEvent.clientY - this._DragStartY) / tmpVS.Zoom;
 
-		let tmpNewX = this._DragNodeStartX + tmpDX;
-		let tmpNewY = this._DragNodeStartY + tmpDY;
+		// A single-node drag can show alignment guides and snap to other nodes' edges/centers.
+		// Multi-drag keeps the rigid group offset (aligning a moving group is ambiguous).
+		if (this._DragNodes.length === 1 && this._FlowView.options.EnableAlignmentGuides)
+		{
+			let tmpHash = this._DragNodes[0].Hash;
+			let tmpNode = this._FlowView.getNode(tmpHash);
+			let tmpX = this._snapToGrid(this._DragNodes[0].StartX + tmpDX);
+			let tmpY = this._snapToGrid(this._DragNodes[0].StartY + tmpDY);
+			if (tmpNode)
+			{
+				let tmpAlign = this._alignmentFor(tmpNode, tmpX, tmpY);
+				this._drawGuides(tmpAlign.Guides);
+				this._FlowView.updateNodePosition(tmpHash, tmpAlign.X, tmpAlign.Y);
+				return;
+			}
+		}
 
-		this._FlowView.updateNodePosition(this._DragNodeHash, tmpNewX, tmpNewY);
+		for (let i = 0; i < this._DragNodes.length; i++)
+		{
+			let tmpNewX = this._snapToGrid(this._DragNodes[i].StartX + tmpDX);
+			let tmpNewY = this._snapToGrid(this._DragNodes[i].StartY + tmpDY);
+			this._FlowView.updateNodePosition(this._DragNodes[i].Hash, tmpNewX, tmpNewY);
+		}
+	}
+
+	// ---- Alignment guides (single-node drag) ----
+	// Compare the dragged node's six reference lines (left / center-x / right and top / center-y /
+	// bottom) against every other node's. Within a small threshold the dragged node snaps so the lines
+	// coincide, and a guide line is reported spanning both nodes. Returns the (possibly snapped)
+	// position plus the guides to draw; a pure computation so it can be unit-tested without a DOM.
+	_alignmentFor(pDragNode, pX, pY)
+	{
+		let tmpZoom = (this._FlowView.viewState && this._FlowView.viewState.Zoom) ? this._FlowView.viewState.Zoom : 1;
+		let tmpThreshold = 6 / tmpZoom;
+		let tmpDefaultW = this._FlowView.options.DefaultNodeWidth || 180;
+		let tmpDefaultH = this._FlowView.options.DefaultNodeHeight || 80;
+		let tmpW = (typeof pDragNode.Width === 'number') ? pDragNode.Width : tmpDefaultW;
+		let tmpH = (typeof pDragNode.Height === 'number') ? pDragNode.Height : tmpDefaultH;
+
+		let tmpDragV = [ pX, pX + tmpW / 2, pX + tmpW ];   // left, center-x, right
+		let tmpDragH = [ pY, pY + tmpH / 2, pY + tmpH ];   // top, center-y, bottom
+
+		let tmpBestV = null;
+		let tmpBestH = null;
+		let tmpNodes = this._FlowView._FlowData.Nodes || [];
+
+		for (let i = 0; i < tmpNodes.length; i++)
+		{
+			let tmpO = tmpNodes[i];
+			if (tmpO.Hash === pDragNode.Hash) continue;
+			let tmpOW = (typeof tmpO.Width === 'number') ? tmpO.Width : tmpDefaultW;
+			let tmpOH = (typeof tmpO.Height === 'number') ? tmpO.Height : tmpDefaultH;
+			let tmpOtherV = [ tmpO.X, tmpO.X + tmpOW / 2, tmpO.X + tmpOW ];
+			let tmpOtherH = [ tmpO.Y, tmpO.Y + tmpOH / 2, tmpO.Y + tmpOH ];
+
+			for (let a = 0; a < tmpDragV.length; a++)
+			{
+				for (let b = 0; b < tmpOtherV.length; b++)
+				{
+					let tmpD = Math.abs(tmpDragV[a] - tmpOtherV[b]);
+					if (tmpD <= tmpThreshold && (!tmpBestV || tmpD < tmpBestV.Delta))
+					{
+						tmpBestV = { Delta: tmpD, Pos: tmpOtherV[b], SnapX: pX + (tmpOtherV[b] - tmpDragV[a]), OtherTop: tmpO.Y, OtherBottom: tmpO.Y + tmpOH };
+					}
+				}
+			}
+			for (let a = 0; a < tmpDragH.length; a++)
+			{
+				for (let b = 0; b < tmpOtherH.length; b++)
+				{
+					let tmpD = Math.abs(tmpDragH[a] - tmpOtherH[b]);
+					if (tmpD <= tmpThreshold && (!tmpBestH || tmpD < tmpBestH.Delta))
+					{
+						tmpBestH = { Delta: tmpD, Pos: tmpOtherH[b], SnapY: pY + (tmpOtherH[b] - tmpDragH[a]), OtherLeft: tmpO.X, OtherRight: tmpO.X + tmpOW };
+					}
+				}
+			}
+		}
+
+		let tmpResult = { X: pX, Y: pY, Guides: [] };
+		if (tmpBestV)
+		{
+			tmpResult.X = tmpBestV.SnapX;
+			tmpResult.Guides.push({ Type: 'v', Pos: tmpBestV.Pos, A: Math.min(tmpResult.Y, tmpBestV.OtherTop), B: Math.max(tmpResult.Y + tmpH, tmpBestV.OtherBottom) });
+		}
+		if (tmpBestH)
+		{
+			tmpResult.Y = tmpBestH.SnapY;
+			tmpResult.Guides.push({ Type: 'h', Pos: tmpBestH.Pos, A: Math.min(tmpResult.X, tmpBestH.OtherLeft), B: Math.max(tmpResult.X + tmpW, tmpBestH.OtherRight) });
+		}
+		return tmpResult;
+	}
+
+	_drawGuides(pGuides)
+	{
+		this._clearGuides();
+		if (!pGuides || pGuides.length === 0 || !this._FlowView._ViewportElement) return;
+		this._GuideElements = [];
+		for (let i = 0; i < pGuides.length; i++)
+		{
+			let tmpG = pGuides[i];
+			let tmpLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+			tmpLine.setAttribute('class', 'pict-flow-align-guide');
+			if (tmpG.Type === 'v') { tmpLine.setAttribute('x1', tmpG.Pos); tmpLine.setAttribute('x2', tmpG.Pos); tmpLine.setAttribute('y1', tmpG.A); tmpLine.setAttribute('y2', tmpG.B); }
+			else { tmpLine.setAttribute('y1', tmpG.Pos); tmpLine.setAttribute('y2', tmpG.Pos); tmpLine.setAttribute('x1', tmpG.A); tmpLine.setAttribute('x2', tmpG.B); }
+			this._FlowView._ViewportElement.appendChild(tmpLine);
+			this._GuideElements.push(tmpLine);
+		}
+	}
+
+	_clearGuides()
+	{
+		if (this._GuideElements)
+		{
+			for (let i = 0; i < this._GuideElements.length; i++)
+			{
+				let tmpEl = this._GuideElements[i];
+				if (tmpEl.parentNode) { tmpEl.parentNode.removeChild(tmpEl); }
+			}
+		}
+		this._GuideElements = null;
+	}
+
+	// Snap a coordinate or size to the grid when the flow has EnableGridSnap on; otherwise pass through.
+	_snapToGrid(pValue)
+	{
+		if (!this._FlowView.options.EnableGridSnap) { return pValue; }
+		// A defined GridSnapSize of 0 means "no snap"; only an absent size falls back to the default.
+		let tmpGrid = (typeof this._FlowView.options.GridSnapSize === 'number') ? this._FlowView.options.GridSnapSize : 20;
+		if (tmpGrid <= 0) { return pValue; }
+		return Math.round(pValue / tmpGrid) * tmpGrid;
 	}
 
 	_endNodeDrag(pEvent)
 	{
 		this._SVGElement.classList.remove('panning');
+		this._clearGuides();
 
-		let tmpNodeGroup = this._FlowView._NodesLayer.querySelector(`[data-node-hash="${this._DragNodeHash}"]`);
-		if (tmpNodeGroup)
+		let tmpDragged = this._DragNodes || [];
+		for (let i = 0; i < tmpDragged.length; i++)
 		{
-			tmpNodeGroup.classList.remove('dragging');
+			let tmpNodeGroup = this._FlowView._NodesLayer.querySelector(`[data-node-hash="${tmpDragged[i].Hash}"]`);
+			if (tmpNodeGroup) { tmpNodeGroup.classList.remove('dragging'); }
 		}
 
 		this._FlowView.renderFlow();
 		this._FlowView.marshalFromView();
 
-		let tmpNode = this._FlowView.getNode(this._DragNodeHash);
-		if (tmpNode && this._FlowView._EventHandlerProvider)
+		if (this._FlowView._EventHandlerProvider)
 		{
-			this._FlowView._EventHandlerProvider.fireEvent('onNodeMoved', tmpNode);
+			for (let i = 0; i < tmpDragged.length; i++)
+			{
+				let tmpNode = this._FlowView.getNode(tmpDragged[i].Hash);
+				if (tmpNode) { this._FlowView._EventHandlerProvider.fireEvent('onNodeMoved', tmpNode); }
+			}
 			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', this._FlowView.flowData);
 		}
 
 		this._State = INTERACTION_STATES.IDLE;
 		this._DragNodeHash = null;
+		this._DragNodes = null;
 	}
 
 	// ---- Panel Dragging ----
@@ -682,6 +874,71 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 
 		this._State = INTERACTION_STATES.IDLE;
 		this._ResizePanelHash = null;
+	}
+
+	// ---- Node Resizing ----
+	// Drag the bottom-right handle (rendered on the selected node when the flow's
+	// EnableNodeResizing option is on) to set Width/Height. Deltas are divided by the
+	// zoom so the corner tracks the pointer at any zoom level.
+
+	_startNodeResize(pEvent, pTarget)
+	{
+		if (!this._FlowView.options.EnableNodeResizing) return;
+
+		let tmpNodeHash = this._getNodeHash(pTarget);
+		if (!tmpNodeHash) return;
+
+		let tmpNode = this._FlowView.getNode(tmpNodeHash);
+		if (!tmpNode) return;
+
+		this._State = INTERACTION_STATES.RESIZING_NODE;
+		this._ResizeNodeHash = tmpNodeHash;
+		this._ResizeNodeStartX = pEvent.clientX;
+		this._ResizeNodeStartY = pEvent.clientY;
+		this._ResizeNodeStartWidth = tmpNode.Width || 180;
+		this._ResizeNodeStartHeight = tmpNode.Height || 80;
+
+		this._SVGElement.classList.add('panning');
+		if (pEvent.stopPropagation) pEvent.stopPropagation();
+	}
+
+	_onNodeResize(pEvent)
+	{
+		if (!this._ResizeNodeHash) return;
+
+		let tmpVS = this._FlowView.viewState;
+		let tmpDX = (pEvent.clientX - this._ResizeNodeStartX) / tmpVS.Zoom;
+		let tmpDY = (pEvent.clientY - this._ResizeNodeStartY) / tmpVS.Zoom;
+
+		let tmpMinW = this._FlowView.options.MinimumNodeWidth || 48;
+		let tmpMinH = this._FlowView.options.MinimumNodeHeight || 32;
+
+		let tmpNode = this._FlowView.getNode(this._ResizeNodeHash);
+		if (!tmpNode) return;
+
+		tmpNode.Width = Math.max(tmpMinW, this._snapToGrid(Math.round(this._ResizeNodeStartWidth + tmpDX)));
+		tmpNode.Height = Math.max(tmpMinH, this._snapToGrid(Math.round(this._ResizeNodeStartHeight + tmpDY)));
+
+		// Re-render so the body (and any HTML/image content) reflows to the new size.
+		this._FlowView.renderFlow();
+	}
+
+	_endNodeResize(pEvent)
+	{
+		this._SVGElement.classList.remove('panning');
+
+		this._FlowView.renderFlow();
+		this._FlowView.marshalFromView();
+
+		let tmpNode = this._FlowView.getNode(this._ResizeNodeHash);
+		if (tmpNode && this._FlowView._EventHandlerProvider)
+		{
+			this._FlowView._EventHandlerProvider.fireEvent('onNodeResized', tmpNode);
+			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', this._FlowView.flowData);
+		}
+
+		this._State = INTERACTION_STATES.IDLE;
+		this._ResizeNodeHash = null;
 	}
 
 	// ---- Handle Dragging ----
@@ -1021,6 +1278,81 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 	{
 		this._SVGElement.classList.remove('panning');
 		this._State = INTERACTION_STATES.IDLE;
+	}
+
+	// ---- Marquee selection (multi-select) ----
+	// A rubber-band rectangle drawn in world coordinates (inside the transformed viewport group), so it
+	// tracks the nodes under it regardless of pan/zoom. On release every node whose box intersects the
+	// rectangle is selected; a rectangle too small to be a deliberate drag is treated as a click that
+	// clears the selection.
+
+	_startMarquee(pEvent)
+	{
+		let tmpStart = this._FlowView.screenToSVGCoords(pEvent.clientX, pEvent.clientY);
+		this._MarqueeStartX = tmpStart.x;
+		this._MarqueeStartY = tmpStart.y;
+		this._MarqueeCurrentX = tmpStart.x;
+		this._MarqueeCurrentY = tmpStart.y;
+		this._State = INTERACTION_STATES.MARQUEE;
+
+		let tmpRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+		tmpRect.setAttribute('class', 'pict-flow-marquee');
+		tmpRect.setAttribute('x', tmpStart.x);
+		tmpRect.setAttribute('y', tmpStart.y);
+		tmpRect.setAttribute('width', 0);
+		tmpRect.setAttribute('height', 0);
+		this._MarqueeElement = tmpRect;
+		if (this._FlowView._ViewportElement) { this._FlowView._ViewportElement.appendChild(tmpRect); }
+	}
+
+	_onMarquee(pEvent)
+	{
+		if (!this._MarqueeElement) return;
+		let tmpCur = this._FlowView.screenToSVGCoords(pEvent.clientX, pEvent.clientY);
+		this._MarqueeCurrentX = tmpCur.x;
+		this._MarqueeCurrentY = tmpCur.y;
+		let tmpX = Math.min(this._MarqueeStartX, tmpCur.x);
+		let tmpY = Math.min(this._MarqueeStartY, tmpCur.y);
+		this._MarqueeElement.setAttribute('x', tmpX);
+		this._MarqueeElement.setAttribute('y', tmpY);
+		this._MarqueeElement.setAttribute('width', Math.abs(tmpCur.x - this._MarqueeStartX));
+		this._MarqueeElement.setAttribute('height', Math.abs(tmpCur.y - this._MarqueeStartY));
+	}
+
+	_endMarquee(pEvent)
+	{
+		let tmpX = Math.min(this._MarqueeStartX, this._MarqueeCurrentX);
+		let tmpY = Math.min(this._MarqueeStartY, this._MarqueeCurrentY);
+		let tmpW = Math.abs(this._MarqueeCurrentX - this._MarqueeStartX);
+		let tmpH = Math.abs(this._MarqueeCurrentY - this._MarqueeStartY);
+
+		if (this._MarqueeElement && this._MarqueeElement.parentNode)
+		{
+			this._MarqueeElement.parentNode.removeChild(this._MarqueeElement);
+		}
+		this._MarqueeElement = null;
+		this._State = INTERACTION_STATES.IDLE;
+
+		// Too small to be a deliberate drag: treat as a background click and clear the selection.
+		if (tmpW < 4 && tmpH < 4)
+		{
+			this._FlowView.deselectAll();
+			return;
+		}
+
+		let tmpHits = [];
+		let tmpNodes = this._FlowView._FlowData.Nodes || [];
+		let tmpDefaultW = this._FlowView.options.DefaultNodeWidth || 180;
+		let tmpDefaultH = this._FlowView.options.DefaultNodeHeight || 80;
+		for (let i = 0; i < tmpNodes.length; i++)
+		{
+			let tmpN = tmpNodes[i];
+			let tmpNW = (typeof tmpN.Width === 'number') ? tmpN.Width : tmpDefaultW;
+			let tmpNH = (typeof tmpN.Height === 'number') ? tmpN.Height : tmpDefaultH;
+			let tmpIntersects = !(tmpN.X > tmpX + tmpW || (tmpN.X + tmpNW) < tmpX || tmpN.Y > tmpY + tmpH || (tmpN.Y + tmpNH) < tmpY);
+			if (tmpIntersects) { tmpHits.push(tmpN.Hash); }
+		}
+		this._FlowView.selectNodes(tmpHits);
 	}
 
 	// ---- Connection Selection ----

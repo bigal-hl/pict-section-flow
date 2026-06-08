@@ -270,6 +270,29 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 		.pict-flow-node-title-bar-bottom {
 			fill: var(--pf-node-title-bar-color);
 		}
+		.pict-flow-node-resize-handle {
+			fill: var(--theme-color-brand-primary, #2880a6);
+			stroke: var(--theme-color-background-panel, #ffffff);
+			stroke-width: 1.5;
+			cursor: nwse-resize;
+			opacity: 0.85;
+		}
+		.pict-flow-node-resize-handle:hover { opacity: 1; }
+		.pict-flow-marquee {
+			fill: var(--theme-color-brand-primary, #2880a6);
+			fill-opacity: 0.10;
+			stroke: var(--theme-color-brand-primary, #2880a6);
+			stroke-width: 1;
+			stroke-dasharray: 4 3;
+			pointer-events: none;
+		}
+		.pict-flow-align-guide {
+			stroke: #e5397f;
+			stroke-width: 1;
+			stroke-dasharray: 3 2;
+			pointer-events: none;
+			shape-rendering: crispEdges;
+		}
 		.pict-flow-node-title {
 			fill: var(--pf-node-title-fill);
 			font-size: var(--pf-node-title-size);

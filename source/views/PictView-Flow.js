@@ -59,8 +59,18 @@ const _DefaultConfiguration =
 	EnableZooming: true,
 	EnableNodeDragging: true,
 	EnableConnectionCreation: true,
+	// When on, the selected node shows a bottom-right grip that resizes it by drag. Off by default
+	// so existing diagrams are unaffected; free-form canvases (moodboards) turn it on.
+	EnableNodeResizing: false,
 	EnableGridSnap: false,
 	GridSnapSize: 20,
+	// When on, several nodes can be selected at once: shift-click a node to toggle it, drag on the
+	// empty canvas to marquee-select (shift+drag pans), and dragging any selected node moves them all.
+	// Off by default so single-selection diagrams are unaffected; free-form canvases turn it on.
+	EnableMultiSelect: false,
+	// When on, dragging a single node shows alignment guide lines (and snaps) as its edges or centers
+	// line up with other nodes. Off by default; free-form canvases turn it on.
+	EnableAlignmentGuides: false,
 	EnableLayoutMenu: true,
 
 	MinZoom: 0.1,
@@ -70,6 +80,8 @@ const _DefaultConfiguration =
 	DefaultNodeType: 'default',
 	DefaultNodeWidth: 180,
 	DefaultNodeHeight: 80,
+	MinimumNodeWidth: 48,
+	MinimumNodeHeight: 32,
 
 	// Properties panel for connections (edges). Connections are not typed, so one config serves
 	// them all: { PanelType, DefaultWidth, DefaultHeight, Title, Configuration }. When set, a
@@ -227,6 +239,9 @@ class PictViewFlow extends libPictView
 				PanY: 0,
 				Zoom: 1,
 				SelectedNodeHash: null,
+				// The full selection set (multi-select). SelectedNodeHash stays the primary / most
+				// recently touched member for backward compatibility; single-select keeps it == [hash].
+				SelectedNodeHashes: [],
 				SelectedConnectionHash: null,
 				SelectedTetherHash: null
 			},
@@ -558,15 +573,13 @@ class PictViewFlow extends libPictView
 			}
 		}
 
-		// Setup the node renderer
+		// Setup the node renderer. A consumer can override the node title-bar height (e.g. a moodboard
+		// sets it to 0 for edge-to-edge image and note cards) via the flow-level NodeTitleBarHeight
+		// option; otherwise the renderer keeps its own default.
+		let tmpNodeViewOptions = { ViewIdentifier: `Flow-NodeRenderer-${tmpViewIdentifier}`, AutoRender: false };
+		if (typeof this.options.NodeTitleBarHeight === 'number') { tmpNodeViewOptions.NodeTitleBarHeight = this.options.NodeTitleBarHeight; }
 		this._NodeView = this.fable.instantiateServiceProviderWithoutRegistration('PictViewFlowNode',
-			Object.assign({},
-				libPictViewFlowNode.default_configuration,
-				{
-					ViewIdentifier: `Flow-NodeRenderer-${tmpViewIdentifier}`,
-					AutoRender: false
-				}
-			));
+			Object.assign({}, libPictViewFlowNode.default_configuration, tmpNodeViewOptions));
 		this._NodeView._FlowView = this;
 
 		// Setup the properties panel renderer
@@ -614,6 +627,33 @@ class PictViewFlow extends libPictView
 	selectNode(pNodeHash)
 	{
 		return this._SelectionManager.selectNode(pNodeHash);
+	}
+
+	/**
+	 * Toggle a node's membership in the selection set (multi-select; shift-click).
+	 * @param {string} pNodeHash
+	 */
+	toggleNodeSelection(pNodeHash)
+	{
+		return this._SelectionManager.toggleNodeSelection(pNodeHash);
+	}
+
+	/**
+	 * Replace the selection set with the given node hashes (multi-select; marquee result).
+	 * @param {Array<string>} pNodeHashes
+	 */
+	selectNodes(pNodeHashes)
+	{
+		return this._SelectionManager.selectNodes(pNodeHashes);
+	}
+
+	/**
+	 * The current selection set as an array of node hashes.
+	 * @returns {Array<string>}
+	 */
+	getSelectedNodeHashes()
+	{
+		return this._SelectionManager.getSelectedNodeHashes();
 	}
 
 	/**
