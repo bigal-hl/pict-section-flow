@@ -81,9 +81,10 @@ const _DefaultConfiguration =
 			Hash: 'Flow-FloatingToolbar-Extra-Button',
 			// Icon-only host button (the floating toolbar is compact). Icon span
 			// is filled post-render by _populateIcons (keyed by Hash).
-			Template: /*html*/`<button class="pict-flow-floating-btn" title="{~D:Record.Tooltip~}" data-flow-action="extra" data-extra-hash="{~D:Record.Hash~}"
+			Template: /*html*/`<button class="pict-flow-floating-btn{~D:Record.ToggleClass~}{~D:Record.ActiveClass~}" title="{~D:Record.Tooltip~}" data-flow-action="extra" data-extra-hash="{~D:Record.Hash~}"
 	onclick="_Pict.views['{~D:Record.FlowViewIdentifier~}']._ToolbarView._FloatingToolbarView._handleExtraClick('{~D:Record.Hash~}', this)">
 	<span id="Flow-FloatingExtraIcon-{~D:Record.Hash~}-{~D:Record.FlowViewIdentifier~}"></span>
+	<span class="pict-flow-toolbar-btn-led" aria-hidden="true"></span>
 </button>`
 		}
 	],
@@ -132,6 +133,9 @@ class PictViewFlowFloatingToolbar extends libPictView
 			for (let i = 0; i < tmpExtraButtons.length; i++)
 			{
 				tmpExtraButtons[i].FlowViewIdentifier = this.options.FlowViewIdentifier;
+				// Mirror the docked toolbar so toggle buttons show the same status LED here.
+				tmpExtraButtons[i].ToggleClass = tmpExtraButtons[i].Toggle ? ' pict-flow-toolbar-btn-toggle' : '';
+				tmpExtraButtons[i].ActiveClass = tmpExtraButtons[i].Active ? ' pict-flow-toolbar-btn-active' : '';
 			}
 		}
 		return super.render(pRenderableHash, pRenderDestinationAddress, this.options);

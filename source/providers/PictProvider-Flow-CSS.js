@@ -205,16 +205,19 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 		.pict-flow-svg {
 			width: 100%;
 			height: 100%;
-			cursor: grab;
+			cursor: default;
 			user-select: none;
 			-webkit-user-select: none;
 		}
-		.pict-flow-svg.panning {
-			cursor: grabbing;
-		}
-		.pict-flow-svg.connecting {
-			cursor: crosshair;
-		}
+		/* The canvas cursor is owned by the CursorManager: it sets data-flow-cursor
+		   on the SVG from the interaction state + view mode, and these map the
+		   tokens to real cursors. Element-scoped hover cursors (ports, handles,
+		   panel chrome, toolbar buttons) still win for their own elements. */
+		.pict-flow-svg[data-flow-cursor="grab"] { cursor: grab; }
+		.pict-flow-svg[data-flow-cursor="grabbing"] { cursor: grabbing; }
+		.pict-flow-svg[data-flow-cursor="crosshair"] { cursor: crosshair; }
+		.pict-flow-svg[data-flow-cursor="resize"] { cursor: nwse-resize; }
+		.pict-flow-svg[data-flow-cursor="default"] { cursor: default; }
 		.pict-flow-grid-pattern line {
 			stroke: var(--pf-grid-stroke);
 			stroke-width: 0.5;
@@ -1307,6 +1310,33 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 			background-color: var(--pf-button-active-bg);
 			border-color: var(--pf-button-hover-border);
 		}
+		/* Toggle-state LED: a status dot in the corner of a toggle button (one marked
+		   Toggle:true). Action buttons render no LED; a toggle shows an empty outline
+		   when off and a filled green dot when on (the .active class). Works on the
+		   docked and floating toolbars. */
+		.pict-flow-toolbar-btn, .pict-flow-floating-btn {
+			position: relative;
+		}
+		.pict-flow-toolbar-btn-led {
+			display: none;
+			position: absolute;
+			right: 2px;
+			bottom: 2px;
+			width: 7px;
+			height: 7px;
+			box-sizing: border-box;
+			border-radius: 50%;
+			border: 1.5px solid var(--pf-button-border, #c2cad6);
+			background: transparent;
+			pointer-events: none;
+		}
+		.pict-flow-toolbar-btn-toggle .pict-flow-toolbar-btn-led {
+			display: block;
+		}
+		.pict-flow-toolbar-btn-toggle.pict-flow-toolbar-btn-active .pict-flow-toolbar-btn-led {
+			background: var(--theme-color-status-success, #27ae60);
+			border-color: var(--theme-color-status-success, #27ae60);
+		}
 		/* An icon-only host button (ToolbarExtraButtons with no Label) renders an empty text span. */
 		.pict-flow-toolbar-btn-text:empty {
 			display: none;
@@ -2019,6 +2049,12 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 			// Remove existing CSS first so we can re-register with updated theme overrides
 			this.fable.CSSMap.removeCSS('PictSectionFlow-CSS');
 			this.fable.CSSMap.addCSS('PictSectionFlow-CSS', this.generateCSS(), 500, 'PictProviderFlowCSS');
+
+			// Supplemental CSS (read-only chrome hiding + content frame), at a
+			// priority above the base so the hides win.
+			this.fable.CSSMap.removeCSS('PictSectionFlow-Supplemental-CSS');
+			this.fable.CSSMap.addCSS('PictSectionFlow-Supplemental-CSS', this._supplementalCSS(), 502, 'PictProviderFlowCSS');
+
 			// Re-inject into the DOM to apply the updated CSS
 			this.fable.CSSMap.injectCSS();
 		}
@@ -2052,6 +2088,36 @@ class PictProviderFlowCSS extends libFableServiceProviderBase
 
 		this.fable.CSSMap.addCSS('PictSectionFlow-Renderer-CSS', tmpCSS, 501, 'PictProviderFlowCSS');
 		this.fable.CSSMap.injectCSS();
+	}
+
+	/**
+	 * Supplemental CSS: hides editing chrome when the container carries the
+	 * 'pict-flow-readonly' class (set by PictView-Flow.setReadOnly), and styles
+	 * the content-frame rectangle. Replaces the ad-hoc CSS consumers (e.g.
+	 * moodboard) used to inject for a read-only look or a board frame.
+	 * @returns {string}
+	 */
+	_supplementalCSS()
+	{
+		return /*css*/`
+		.pict-flow-readonly .pict-flow-port,
+		.pict-flow-readonly .pict-flow-port-hint,
+		.pict-flow-readonly .pict-flow-node-resize-handle { display: none; }
+		.pict-flow-readonly [data-flow-action="add-node"],
+		.pict-flow-readonly [data-flow-action="delete-selected"],
+		.pict-flow-readonly [data-flow-action="cards-popup"] { display: none; }
+		.pict-flow-frame { fill: none; stroke: var(--theme-color-border, #9aa3ab); stroke-width: 1.5; stroke-dasharray: 8 6; pointer-events: none; }
+		.pict-flow-frame-handle { fill: var(--theme-color-background-panel, #ffffff); stroke: var(--theme-color-brand-primary, #2e7d74); stroke-width: 1.5; }
+		.pict-flow-frame-handle:hover { fill: var(--theme-color-brand-primary, #2e7d74); }
+		.pict-flow-frame-handle-n, .pict-flow-frame-handle-s { cursor: ns-resize; }
+		.pict-flow-frame-handle-e, .pict-flow-frame-handle-w { cursor: ew-resize; }
+		.pict-flow-frame-move-handle { cursor: move; rx: 6; }
+		.pict-flow-node-rotate-arm { stroke: var(--theme-color-brand-primary, #2e7d74); stroke-width: 1.5; }
+		.pict-flow-node-rotate-handle { fill: var(--theme-color-background-panel, #ffffff); stroke: var(--theme-color-brand-primary, #2e7d74); stroke-width: 1.5; cursor: grab; }
+		.pict-flow-node-rotate-handle:hover { fill: var(--theme-color-brand-primary, #2e7d74); }
+		.pict-flow-readonly .pict-flow-node-rotate-arm,
+		.pict-flow-readonly .pict-flow-node-rotate-handle { display: none; }
+		`;
 	}
 }
 

@@ -42,6 +42,235 @@ function ()
 	let _Fable;
 	setup(function () { _Fable = new libFable({}); });
 
+	suite('wheel action resolution',
+	function ()
+	{
+		function makeWheelManager(pOptions)
+		{
+			return new libInteractionManager(_Fable, { FlowView: { options: pOptions } }, 'IM-Wheel');
+		}
+
+		test("default 'zoom' mode zooms on a plain wheel",
+		function ()
+		{
+			let tmpIM = makeWheelManager({ WheelMode: 'zoom', EnableZooming: true, EnablePanning: true });
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10 }).action).to.equal('zoom');
+		});
+
+		test("zoom mode + WheelZoomRequiresModifier: plain wheel pans, ctrl/cmd wheel zooms",
+		function ()
+		{
+			let tmpIM = makeWheelManager({ WheelMode: 'zoom', WheelZoomRequiresModifier: true, EnableZooming: true, EnablePanning: true });
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10 }).action).to.equal('pan');
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10, ctrlKey: true }).action).to.equal('zoom');
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10, metaKey: true }).action).to.equal('zoom');
+		});
+
+		test("'pan' mode pans on a plain wheel and zooms with a modifier",
+		function ()
+		{
+			let tmpIM = makeWheelManager({ WheelMode: 'pan', EnableZooming: true, EnablePanning: true });
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10 }).action).to.equal('pan');
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10, ctrlKey: true }).action).to.equal('zoom');
+		});
+
+		test("'none' mode ignores the wheel",
+		function ()
+		{
+			let tmpIM = makeWheelManager({ WheelMode: 'none', EnableZooming: true, EnablePanning: true });
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10 }).action).to.equal('none');
+		});
+
+		test('a zoom intent with zooming disabled is a no-op (legacy behavior)',
+		function ()
+		{
+			let tmpIM = makeWheelManager({ WheelMode: 'zoom', EnableZooming: false, EnablePanning: true });
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10 }).action).to.equal('none');
+		});
+
+		test('a pan intent with panning disabled is a no-op',
+		function ()
+		{
+			let tmpIM = makeWheelManager({ WheelMode: 'pan', EnableZooming: true, EnablePanning: false });
+			libExpect(tmpIM._resolveWheelAction({ deltaY: 10 }).action).to.equal('none');
+		});
+	});
+
+	suite('read-only mode',
+	function ()
+	{
+		function makeReadOnlyView(pReadOnly)
+		{
+			let tmpFired = [];
+			let tmpCalls = { selectNode: [], deleteSelected: 0 };
+			return {
+				options: { ReadOnly: pReadOnly, EnablePanning: true, EnableMultiSelect: false },
+				isReadOnly: function () { return pReadOnly; },
+				selectNode: function (pHash) { tmpCalls.selectNode.push(pHash); },
+				getNode: function (pHash) { return { Hash: pHash }; },
+				deleteSelected: function () { tmpCalls.deleteSelected++; },
+				_EventHandlerProvider: { fireEvent: function (pName, pData) { tmpFired.push({ name: pName, data: pData }); } },
+				_firedEvents: tmpFired,
+				_calls: tmpCalls
+			};
+		}
+
+		function makeRoManager(pView)
+		{
+			let tmpIM = new libInteractionManager(_Fable, { FlowView: pView }, 'IM-RO');
+			tmpIM._SVGElement = { setPointerCapture: function () {}, classList: { add: function () {}, remove: function () {} } };
+			return tmpIM;
+		}
+
+		function elTarget(pType, pNodeHash)
+		{
+			return { getAttribute: function (pAttr) { if (pAttr === 'data-element-type') return pType; if (pAttr === 'data-node-hash') return pNodeHash || null; return null; } };
+		}
+
+		test('_isReadOnly reflects the view',
+		function ()
+		{
+			libExpect(makeRoManager(makeReadOnlyView(true))._isReadOnly()).to.equal(true);
+			libExpect(makeRoManager(makeReadOnlyView(false))._isReadOnly()).to.equal(false);
+		});
+
+		test('a node click selects and fires onNodeActivate without starting a drag',
+		function ()
+		{
+			let tmpView = makeReadOnlyView(true);
+			let tmpIM = makeRoManager(tmpView);
+			tmpIM._onPointerDown({ button: 0, pointerId: 1, target: elTarget('node', 'n1'), shiftKey: false, preventDefault: function () {}, stopPropagation: function () {} });
+			libExpect(tmpView._calls.selectNode).to.deep.equal(['n1']);
+			libExpect(tmpView._firedEvents.some(function (e) { return e.name === 'onNodeActivate'; })).to.equal(true);
+			libExpect(tmpIM._State).to.equal(STATES.IDLE);
+		});
+
+		test('Delete is ignored in read-only but deletes when editable',
+		function ()
+		{
+			let tmpRO = makeReadOnlyView(true);
+			makeRoManager(tmpRO)._onKeyDown({ key: 'Delete', target: {}, preventDefault: function () {} });
+			libExpect(tmpRO._calls.deleteSelected).to.equal(0);
+
+			let tmpEditable = makeReadOnlyView(false);
+			makeRoManager(tmpEditable)._onKeyDown({ key: 'Delete', target: {}, preventDefault: function () {} });
+			libExpect(tmpEditable._calls.deleteSelected).to.equal(1);
+		});
+
+		test('context-menu edge editing is ignored in read-only but works when editable',
+		function ()
+		{
+			let tmpROManager = makeRoManager(makeReadOnlyView(true));
+			let tmpRoCalls = 0;
+			tmpROManager._addBezierHandle = function () { tmpRoCalls++; };
+			tmpROManager.handleContextMenu({ preventDefault: function () {}, target: elTarget('connection') });
+			libExpect(tmpRoCalls).to.equal(0);
+
+			let tmpEditManager = makeRoManager(makeReadOnlyView(false));
+			let tmpEditCalls = 0;
+			tmpEditManager._addBezierHandle = function () { tmpEditCalls++; };
+			tmpEditManager.handleContextMenu({ preventDefault: function () {}, target: elTarget('connection') });
+			libExpect(tmpEditCalls).to.equal(1);
+		});
+
+		test('the wheel scrolls the page by default (none) and zooms only when navigating',
+		function ()
+		{
+			let tmpStatic = makeRoManager(makeReadOnlyView(true));
+			libExpect(tmpStatic._resolveWheelAction({ deltaY: 10 }).action).to.equal('none');
+
+			let tmpNavView = makeReadOnlyView(true);
+			tmpNavView.isReadOnlyNavigation = function () { return true; };
+			let tmpNav = makeRoManager(tmpNavView);
+			libExpect(tmpNav._resolveWheelAction({ deltaY: 10 }).action).to.equal('zoom');
+		});
+
+		test('with the hand on, a pointer-down on a card pans instead of selecting',
+		function ()
+		{
+			let tmpView = makeReadOnlyView(true);
+			tmpView.isReadOnlyNavigation = function () { return true; };
+			let tmpIM = makeRoManager(tmpView);
+			let tmpPanned = 0;
+			tmpIM._startPanning = function () { tmpPanned++; };
+			tmpIM._onPointerDown({ button: 0, pointerId: 1, target: elTarget('node', 'n1'), preventDefault: function () {}, stopPropagation: function () {} });
+			libExpect(tmpPanned).to.equal(1);
+			libExpect(tmpView._calls.selectNode).to.deep.equal([]);
+		});
+	});
+
+	suite('node rotation',
+	function ()
+	{
+		function makeRotView(pNode, pReadOnly)
+		{
+			return {
+				options: { EnableNodeRotation: true, ReadOnly: !!pReadOnly },
+				isReadOnly: function () { return !!pReadOnly; },
+				viewState: { Zoom: 1, PanX: 0, PanY: 0 },
+				flowData: {},
+				_nodes: (function () { let m = {}; m[pNode.Hash] = pNode; return m; })(),
+				getNode: function (pHash) { return this._nodes[pHash] || null; },
+				screenToSVGCoords: function (pX, pY) { return { x: pX, y: pY }; },
+				renderFlow: function () {},
+				marshalFromView: function () {},
+				_EventHandlerProvider: { fireEvent: function () {} }
+			};
+		}
+
+		function makeRotManager(pView)
+		{
+			let tmpIM = new libInteractionManager(_Fable, { FlowView: pView }, 'IM-Rotate');
+			tmpIM._SVGElement = { classList: { add: function () {}, remove: function () {} }, setPointerCapture: function () {} };
+			return tmpIM;
+		}
+
+		test('points the card top toward the pointer (above=0, right=90, below=180)',
+		function ()
+		{
+			let tmpNode = { Hash: 'n1', X: 100, Y: 100, Width: 100, Height: 100 }; // center 150,150
+			let tmpView = makeRotView(tmpNode, false);
+			let tmpIM = makeRotManager(tmpView);
+
+			tmpIM._startNodeRotate({ stopPropagation: function () {} }, makeTarget('n1'));
+			libExpect(tmpIM._State).to.equal(STATES.ROTATING_NODE);
+
+			tmpIM._onNodeRotate({ clientX: 150, clientY: 50 });
+			libExpect(tmpNode.Rotation).to.equal(0);
+			tmpIM._onNodeRotate({ clientX: 250, clientY: 150 });
+			libExpect(tmpNode.Rotation).to.equal(90);
+			tmpIM._onNodeRotate({ clientX: 150, clientY: 250 });
+			libExpect(tmpNode.Rotation).to.equal(180);
+		});
+
+		test('Shift snaps rotation to 15-degree increments',
+		function ()
+		{
+			let tmpNode = { Hash: 'n1', X: 0, Y: 0, Width: 100, Height: 100 }; // center 50,50
+			let tmpIM = makeRotManager(makeRotView(tmpNode, false));
+			tmpIM._startNodeRotate({ stopPropagation: function () {} }, makeTarget('n1'));
+			// A point just off straight-right; snapped it lands on 90.
+			tmpIM._onNodeRotate({ clientX: 110, clientY: 53, shiftKey: true });
+			libExpect(tmpNode.Rotation % 15).to.equal(0);
+		});
+
+		test('does not start when read-only or when rotation is disabled',
+		function ()
+		{
+			let tmpNodeA = { Hash: 'n1', X: 0, Y: 0, Width: 100, Height: 100 };
+			let tmpReadOnly = makeRotManager(makeRotView(tmpNodeA, true));
+			tmpReadOnly._startNodeRotate({ stopPropagation: function () {} }, makeTarget('n1'));
+			libExpect(tmpReadOnly._State).to.equal(STATES.IDLE);
+
+			let tmpNodeB = { Hash: 'n1', X: 0, Y: 0, Width: 100, Height: 100 };
+			let tmpDisabledView = makeRotView(tmpNodeB, false);
+			tmpDisabledView.options.EnableNodeRotation = false;
+			let tmpDisabled = makeRotManager(tmpDisabledView);
+			tmpDisabled._startNodeRotate({ stopPropagation: function () {} }, makeTarget('n1'));
+			libExpect(tmpDisabled._State).to.equal(STATES.IDLE);
+		});
+	});
+
 	suite('node resize',
 	function ()
 	{

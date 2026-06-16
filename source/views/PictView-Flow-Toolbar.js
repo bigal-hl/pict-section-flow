@@ -117,10 +117,11 @@ const _DefaultConfiguration =
 			// _populateToolbarIcons (keyed by Hash), matching how the built-in
 			// button icons are injected. FlowViewIdentifier + ActiveClass are
 			// stamped onto each row in render().
-			Template: /*html*/`<button class="pict-flow-toolbar-btn{~D:Record.ActiveClass~}" id="Flow-Toolbar-Extra-{~D:Record.Hash~}-{~D:Record.FlowViewIdentifier~}" title="{~D:Record.Tooltip~}" data-flow-action="extra" data-extra-hash="{~D:Record.Hash~}"
+			Template: /*html*/`<button class="pict-flow-toolbar-btn{~D:Record.ToggleClass~}{~D:Record.ActiveClass~}" id="Flow-Toolbar-Extra-{~D:Record.Hash~}-{~D:Record.FlowViewIdentifier~}" title="{~D:Record.Tooltip~}" data-flow-action="extra" data-extra-hash="{~D:Record.Hash~}"
 	onclick="_Pict.views['{~D:Record.FlowViewIdentifier~}']._ToolbarView._handleExtraAction('{~D:Record.Hash~}', this)">
 	<span class="pict-flow-toolbar-btn-icon" id="Flow-Toolbar-ExtraIcon-{~D:Record.Hash~}-{~D:Record.FlowViewIdentifier~}"></span>
 	<span class="pict-flow-toolbar-btn-text">{~D:Record.Label~}</span>
+	<span class="pict-flow-toolbar-btn-led" aria-hidden="true"></span>
 </button>`
 		},
 		{
@@ -253,6 +254,9 @@ class PictViewFlowToolbar extends libPictView
 		{
 			tmpExtraButtons[i].FlowViewIdentifier = this.options.FlowViewIdentifier;
 			tmpExtraButtons[i].ActiveClass = tmpExtraButtons[i].Active ? ' pict-flow-toolbar-btn-active' : '';
+			// Toggle buttons (stateful on/off, e.g. a pan or connect toggle) get a status LED that the
+			// ActiveClass fills; plain action buttons (Toggle falsy) render no LED.
+			tmpExtraButtons[i].ToggleClass = tmpExtraButtons[i].Toggle ? ' pict-flow-toolbar-btn-toggle' : '';
 			// A label-less (icon-only) button renders an empty text span; CSS (:empty) collapses it.
 			if (typeof tmpExtraButtons[i].Label !== 'string') { tmpExtraButtons[i].Label = ''; }
 		}
@@ -1602,7 +1606,7 @@ class PictViewFlowToolbar extends libPictView
 		let tmpNoiseEnabled = !!(tmpActiveRenderer && tmpActiveRenderer.NoiseConfig && tmpActiveRenderer.NoiseConfig.Enabled);
 		let tmpNoiseDisplay = tmpNoiseEnabled ? '' : 'display:none;';
 
-		this.pict.ContentAssignment.assignContent(pContainer,
+		let tmpHTML =
 			'<div class="pict-flow-popup-settings-section">'
 			+ '<label class="pict-flow-popup-settings-label">Theme</label>'
 			+ '<select class="pict-flow-popup-settings-select"'
@@ -1621,7 +1625,50 @@ class PictViewFlowToolbar extends libPictView
 			+ ' oninput="_Pict.views[\'' + tmpFlowViewIdentifier + '\']._ToolbarView._handleNoiseSliderInput(this)" />'
 			+ '<span class="pict-flow-popup-settings-slider-value">' + tmpNoiseLevel + '%</span>'
 			+ '</div>'
-			+ '</div>');
+			+ '</div>';
+
+		tmpHTML += this._buildHostSettingsSections();
+
+		this.pict.ContentAssignment.assignContent(pContainer, tmpHTML);
+	}
+
+	/**
+	 * Host-contributed settings sections. A consumer adds entries to the flow view's
+	 * `SettingsSections` option so its own controls (e.g. a whiteboard's background
+	 * picker) live in the gear popup instead of a separate panel. Each entry is
+	 * `{ Label?, HTML? , Build?(flowView) }`; Build is evaluated at open time so a
+	 * section can reflect live state. Returns concatenated section markup ('' when none).
+	 * @returns {string}
+	 */
+	_buildHostSettingsSections()
+	{
+		let tmpSections = (this._FlowView && this._FlowView.options && Array.isArray(this._FlowView.options.SettingsSections))
+			? this._FlowView.options.SettingsSections
+			: [];
+		let tmpOut = '';
+		for (let i = 0; i < tmpSections.length; i++)
+		{
+			let tmpSection = tmpSections[i];
+			let tmpSectionHTML = '';
+			if (typeof tmpSection.Build === 'function')
+			{
+				tmpSectionHTML = tmpSection.Build(this._FlowView) || '';
+			}
+			else if (typeof tmpSection.HTML === 'string')
+			{
+				tmpSectionHTML = tmpSection.HTML;
+			}
+			if (!tmpSectionHTML)
+			{
+				continue;
+			}
+			tmpOut += '<div class="pict-flow-popup-divider"></div>'
+				+ '<div class="pict-flow-popup-settings-section">'
+				+ (tmpSection.Label ? '<label class="pict-flow-popup-settings-label">' + tmpSection.Label + '</label>' : '')
+				+ tmpSectionHTML
+				+ '</div>';
+		}
+		return tmpOut;
 	}
 
 	/**

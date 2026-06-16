@@ -1,21 +1,26 @@
 const libFableServiceProviderBase = require('fable-serviceproviderbase');
 
-const libLayoutCustom           = require('../providers/layouts/Layout-Custom.js');
-const libLayoutLayered          = require('../providers/layouts/Layout-Layered.js');
-const libLayoutStaggered        = require('../providers/layouts/Layout-Staggered.js');
-const libLayoutForcedFromCenter = require('../providers/layouts/Layout-ForcedFromCenter.js');
-const libLayoutGrid             = require('../providers/layouts/Layout-Grid.js');
-const libLayoutCircular         = require('../providers/layouts/Layout-Circular.js');
-const libLayoutTabular          = require('../providers/layouts/Layout-Tabular.js');
-const libLayoutColumnar         = require('../providers/layouts/Layout-Columnar.js');
+// Layout algorithm and edge-theme descriptors now live in the standalone
+// pict-provider-graphlayout module (flow 2.0 Phase 1b). The variable names below
+// are unchanged so the registration logic that follows is untouched.
+const libGraphLayout = require('pict-provider-graphlayout');
 
-const libEdgeBezier              = require('../providers/edges/Edge-Bezier.js');
-const libEdgeOrthogonal          = require('../providers/edges/Edge-Orthogonal.js');
-const libEdgeStraight            = require('../providers/edges/Edge-Straight.js');
-const libEdgeOrthogonalSnap      = require('../providers/edges/Edge-OrthogonalSnap.js');
-const libEdgePerimeter           = require('../providers/edges/Edge-Perimeter.js');
-const libEdgePerimeterLinear     = require('../providers/edges/Edge-Perimeter-Linear.js');
-const libEdgePerimeterOrthogonal = require('../providers/edges/Edge-Perimeter-Orthogonal.js');
+const libLayoutCustom           = libGraphLayout.Layouts.Custom;
+const libLayoutLayered          = libGraphLayout.Layouts.Layered;
+const libLayoutStaggered        = libGraphLayout.Layouts.Staggered;
+const libLayoutForcedFromCenter = libGraphLayout.Layouts.ForcedFromCenter;
+const libLayoutGrid             = libGraphLayout.Layouts.Grid;
+const libLayoutCircular         = libGraphLayout.Layouts.Circular;
+const libLayoutTabular          = libGraphLayout.Layouts.Tabular;
+const libLayoutColumnar         = libGraphLayout.Layouts.Columnar;
+
+const libEdgeBezier              = libGraphLayout.Edges.Bezier;
+const libEdgeOrthogonal          = libGraphLayout.Edges.Orthogonal;
+const libEdgeStraight            = libGraphLayout.Edges.Straight;
+const libEdgeOrthogonalSnap      = libGraphLayout.Edges.OrthogonalSnap;
+const libEdgePerimeter           = libGraphLayout.Edges.Perimeter;
+const libEdgePerimeterLinear     = libGraphLayout.Edges.PerimeterLinear;
+const libEdgePerimeterOrthogonal = libGraphLayout.Edges.PerimeterOrthogonal;
 
 const _BUILTIN_ALGORITHMS =
 [

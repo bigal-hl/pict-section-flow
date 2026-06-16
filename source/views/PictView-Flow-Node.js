@@ -346,6 +346,35 @@ class PictViewFlowNode extends libPictView
 			tmpGroup.appendChild(tmpHandle);
 		}
 
+		// Rotate handle: a grip on a short arm above the node, shown when this node is selected, the
+		// flow allows rotation, and we are not read-only. Its data-element-type routes pointer-down to
+		// the InteractionManager's node-rotate path. Lives in node-local space, so it orbits with the card.
+		if (pIsSelected && this._FlowView.options && this._FlowView.options.EnableNodeRotation
+			&& !(typeof this._FlowView.isReadOnly === 'function' && this._FlowView.isReadOnly()))
+		{
+			let tmpArmLength = 22;
+			let tmpRotateCenterX = tmpWidth / 2;
+
+			let tmpArm = this._FlowView._SVGHelperProvider.createSVGElement('line');
+			tmpArm.setAttribute('class', 'pict-flow-node-rotate-arm');
+			tmpArm.setAttribute('x1', String(tmpRotateCenterX));
+			tmpArm.setAttribute('y1', '0');
+			tmpArm.setAttribute('x2', String(tmpRotateCenterX));
+			tmpArm.setAttribute('y2', String(-tmpArmLength));
+			tmpArm.setAttribute('data-node-hash', pNodeData.Hash);
+			tmpArm.setAttribute('data-element-type', 'node-rotate');
+			tmpGroup.appendChild(tmpArm);
+
+			let tmpGrip = this._FlowView._SVGHelperProvider.createSVGElement('circle');
+			tmpGrip.setAttribute('class', 'pict-flow-node-rotate-handle');
+			tmpGrip.setAttribute('cx', String(tmpRotateCenterX));
+			tmpGrip.setAttribute('cy', String(-tmpArmLength - 5));
+			tmpGrip.setAttribute('r', '6');
+			tmpGrip.setAttribute('data-node-hash', pNodeData.Hash);
+			tmpGrip.setAttribute('data-element-type', 'node-rotate');
+			tmpGroup.appendChild(tmpGrip);
+		}
+
 		pNodesLayer.appendChild(tmpGroup);
 	}
 

@@ -67,6 +67,20 @@ class PictProviderFlowLayouts extends libPictProvider
 		}
 	}
 
+	/**
+	 * Resolve a host-supplied storage backend, if one was passed as the flow's
+	 * `LayoutStorage` option: `{ read(cb), write(layouts, cb), delete(cb) }` with
+	 * Node-style callbacks. Lets a host wire a REST API / IndexedDB by config
+	 * instead of overriding the three storage hooks. Returns null to fall back to
+	 * localStorage.
+	 * @returns {Object|null}
+	 */
+	_resolveLayoutStorage()
+	{
+		let tmpStorage = (this._FlowView && this._FlowView.options) ? this._FlowView.options.LayoutStorage : null;
+		return (tmpStorage && typeof tmpStorage === 'object') ? tmpStorage : null;
+	}
+
 	// ── Storage Hooks ─────────────────────────────────────────────────────
 	// These three methods form the persistence contract.  The default
 	// implementation uses localStorage.  Override them on the instance or
@@ -84,6 +98,11 @@ class PictProviderFlowLayouts extends libPictProvider
 	 */
 	storageWrite(pLayouts, fCallback)
 	{
+		let tmpStorage = this._resolveLayoutStorage();
+		if (tmpStorage && typeof tmpStorage.write === 'function')
+		{
+			return tmpStorage.write(pLayouts, fCallback);
+		}
 		if (this._StorageKey === false)
 		{
 			return fCallback(null);
@@ -113,6 +132,11 @@ class PictProviderFlowLayouts extends libPictProvider
 	 */
 	storageRead(fCallback)
 	{
+		let tmpStorage = this._resolveLayoutStorage();
+		if (tmpStorage && typeof tmpStorage.read === 'function')
+		{
+			return tmpStorage.read(fCallback);
+		}
 		if (this._StorageKey === false)
 		{
 			return fCallback(null, []);
@@ -149,6 +173,11 @@ class PictProviderFlowLayouts extends libPictProvider
 	 */
 	storageDelete(fCallback)
 	{
+		let tmpStorage = this._resolveLayoutStorage();
+		if (tmpStorage && typeof tmpStorage.delete === 'function')
+		{
+			return tmpStorage.delete(fCallback);
+		}
 		if (this._StorageKey === false)
 		{
 			return fCallback(null);
@@ -488,6 +517,84 @@ class PictProviderFlowLayouts extends libPictProvider
 		return this._FlowView._FlowData.SavedLayouts.find(
 			(pLayout) => pLayout.Hash === pLayoutHash
 		) || null;
+	}
+
+	// ── Default layout ─────────────────────────────────────────────────────
+	// One saved layout can be marked the default arrangement for a graph. The
+	// mark is an IsDefault flag on the layout object, so it rides inside
+	// SavedLayouts and persists through both the storage hooks and
+	// getFlowData/setFlowData with no storage-shape change.
+
+	/**
+	 * Mark a saved layout as the default (clearing any previous default). Pass a
+	 * falsy hash to clear the default entirely. Persists the change.
+	 * @param {string} pLayoutHash
+	 * @returns {boolean} true on success; false if a given hash was not found
+	 */
+	setDefaultLayout(pLayoutHash)
+	{
+		if (!this._FlowView)
+		{
+			this.log.warn('PictProviderFlowLayouts setDefaultLayout: no FlowView reference');
+			return false;
+		}
+
+		let tmpFlowData = this._FlowView._FlowData;
+		let tmpFound = false;
+		for (let i = 0; i < tmpFlowData.SavedLayouts.length; i++)
+		{
+			let tmpIsMatch = (!!pLayoutHash && tmpFlowData.SavedLayouts[i].Hash === pLayoutHash);
+			tmpFlowData.SavedLayouts[i].IsDefault = tmpIsMatch;
+			if (tmpIsMatch) { tmpFound = true; }
+		}
+
+		// A falsy hash clears the default (every IsDefault now false); a non-matching hash is an error.
+		if (pLayoutHash && !tmpFound)
+		{
+			this.log.warn(`PictProviderFlowLayouts setDefaultLayout: layout '${pLayoutHash}' not found`);
+			return false;
+		}
+
+		this._FlowView.marshalFromView();
+		this.storageWrite(tmpFlowData.SavedLayouts, (pError) =>
+		{
+			if (pError)
+			{
+				this.log.warn(`PictProviderFlowLayouts: failed to persist default: ${pError.message}`);
+			}
+		});
+
+		if (this._FlowView._EventHandlerProvider)
+		{
+			this._FlowView._EventHandlerProvider.fireEvent('onLayoutDefaultChanged', this.getDefaultLayout());
+			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', tmpFlowData);
+		}
+
+		return true;
+	}
+
+	/**
+	 * The layout currently marked default, or null if none.
+	 * @returns {Object|null}
+	 */
+	getDefaultLayout()
+	{
+		if (!this._FlowView) return null;
+		return this._FlowView._FlowData.SavedLayouts.find((pLayout) => pLayout.IsDefault === true) || null;
+	}
+
+	/**
+	 * Restore the default layout if one is set.
+	 * @returns {boolean} true if a default existed and was restored
+	 */
+	applyDefaultLayout()
+	{
+		let tmpDefault = this.getDefaultLayout();
+		if (!tmpDefault)
+		{
+			return false;
+		}
+		return this.restoreLayout(tmpDefault.Hash);
 	}
 }
 

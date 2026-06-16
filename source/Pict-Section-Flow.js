@@ -35,30 +35,36 @@ module.exports.PictProviderFlowCSS = require('./providers/PictProvider-Flow-CSS.
 module.exports.PictProviderFlowIcons = require('./providers/PictProvider-Flow-Icons.js');
 module.exports.PictProviderFlowConnectorShapes = require('./providers/PictProvider-Flow-ConnectorShapes.js');
 
+// Layout algorithm and edge-theme descriptors now live in the standalone
+// pict-provider-graphlayout module. They are re-exported here unchanged so the
+// historical pict-section-flow export surface (LayoutAlgorithms / EdgeThemes) is
+// preserved for consumers.
+const libPictProviderGraphLayout = require('pict-provider-graphlayout');
+
 // Layout algorithm descriptors (consumers can register custom algorithms via
 // _LayoutService.registerAlgorithm({ Name, Apply, DefaultParameters, ParameterSchema }))
 module.exports.LayoutAlgorithms =
 {
-	Custom:           require('./providers/layouts/Layout-Custom.js'),
-	Layered:          require('./providers/layouts/Layout-Layered.js'),
-	ForcedFromCenter: require('./providers/layouts/Layout-ForcedFromCenter.js'),
-	Grid:             require('./providers/layouts/Layout-Grid.js'),
-	Circular:         require('./providers/layouts/Layout-Circular.js'),
-	Tabular:          require('./providers/layouts/Layout-Tabular.js'),
-	Columnar:         require('./providers/layouts/Layout-Columnar.js')
+	Custom:           libPictProviderGraphLayout.Layouts.Custom,
+	Layered:          libPictProviderGraphLayout.Layouts.Layered,
+	ForcedFromCenter: libPictProviderGraphLayout.Layouts.ForcedFromCenter,
+	Grid:             libPictProviderGraphLayout.Layouts.Grid,
+	Circular:         libPictProviderGraphLayout.Layouts.Circular,
+	Tabular:          libPictProviderGraphLayout.Layouts.Tabular,
+	Columnar:         libPictProviderGraphLayout.Layouts.Columnar
 };
 
 // Edge-theme descriptors (consumers can register custom edge themes via
 // _LayoutService.registerEdgeTheme({ Name, GeneratePath, AdjustLayout?, ResolveAttachment?, ... }))
 module.exports.EdgeThemes =
 {
-	Bezier:               require('./providers/edges/Edge-Bezier.js'),
-	Orthogonal:           require('./providers/edges/Edge-Orthogonal.js'),
-	Straight:             require('./providers/edges/Edge-Straight.js'),
-	OrthogonalSnap:       require('./providers/edges/Edge-OrthogonalSnap.js'),
-	Perimeter:            require('./providers/edges/Edge-Perimeter.js'),
-	PerimeterLinear:      require('./providers/edges/Edge-Perimeter-Linear.js'),
-	PerimeterOrthogonal:  require('./providers/edges/Edge-Perimeter-Orthogonal.js')
+	Bezier:               libPictProviderGraphLayout.Edges.Bezier,
+	Orthogonal:           libPictProviderGraphLayout.Edges.Orthogonal,
+	Straight:             libPictProviderGraphLayout.Edges.Straight,
+	OrthogonalSnap:       libPictProviderGraphLayout.Edges.OrthogonalSnap,
+	Perimeter:            libPictProviderGraphLayout.Edges.Perimeter,
+	PerimeterLinear:      libPictProviderGraphLayout.Edges.PerimeterLinear,
+	PerimeterOrthogonal:  libPictProviderGraphLayout.Edges.PerimeterOrthogonal
 };
 
 // FlowCard base class

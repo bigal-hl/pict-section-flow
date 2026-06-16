@@ -13,6 +13,9 @@ const INTERACTION_STATES =
 	PANNING: 'panning',
 	RESIZING_PANEL: 'resizing-panel',
 	RESIZING_NODE: 'resizing-node',
+	ROTATING_NODE: 'rotating-node',
+	RESIZING_FRAME: 'resizing-frame',
+	MOVING_FRAME: 'moving-frame',
 	MARQUEE: 'marquee'
 };
 
@@ -30,7 +33,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		this._ViewportElement = null;
 
 		// Interaction state
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 
 		// Drag state
 		this._DragNodeHash = null;
@@ -79,6 +82,13 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		this._ResizeNodeStartY = 0;
 		this._ResizeNodeStartWidth = 0;
 		this._ResizeNodeStartHeight = 0;
+
+		// Content-frame edit state (drag the frame's edge handles to resize, or its move
+		// handle to reposition the view-area box).
+		this._FrameDragEdge = null;
+		this._FrameStart = null;
+		this._FrameStartPointerX = 0;
+		this._FrameStartPointerY = 0;
 
 		// Double-click detection for connections
 		this._LastConnectionClickTime = 0;
@@ -133,6 +143,9 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 	{
 		pEvent.preventDefault();
 
+		// No edge/handle editing in read-only mode.
+		if (this._isReadOnly()) return;
+
 		let tmpTarget = pEvent.target;
 		let tmpElementType = this._getElementType(tmpTarget);
 
@@ -169,6 +182,53 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 	}
 
 	/**
+	 * Whether the flow is in read-only / presentation mode. Tolerant of minimal
+	 * test harnesses: prefers the view's isReadOnly(), falls back to the option.
+	 * @returns {boolean}
+	 */
+	_isReadOnly()
+	{
+		if (!this._FlowView) return false;
+		if (typeof this._FlowView.isReadOnly === 'function') return !!this._FlowView.isReadOnly();
+		return !!(this._FlowView.options && this._FlowView.options.ReadOnly);
+	}
+
+	/**
+	 * Whether read-only canvas navigation (pan + wheel-zoom) is currently on (the
+	 * "hand" toggle). When off, a read-only canvas is static and the wheel scrolls
+	 * the page.
+	 * @returns {boolean}
+	 */
+	_isReadOnlyNavigating()
+	{
+		return !!(this._FlowView && typeof this._FlowView.isReadOnlyNavigation === 'function' && this._FlowView.isReadOnlyNavigation());
+	}
+
+	/**
+	 * The single interaction-state transition chokepoint. Setting state here keeps
+	 * the canvas cursor (and any future state-derived concern) an intentional,
+	 * derived property rather than something toggled by hand at each call site.
+	 * @param {string} pState - an INTERACTION_STATES value
+	 */
+	_setState(pState)
+	{
+		this._State = pState;
+		this._updateCursor();
+	}
+
+	/**
+	 * Ask the CursorManager to re-derive the canvas cursor from the current state
+	 * and mode. No-op until the CursorManager and SVG element exist.
+	 */
+	_updateCursor()
+	{
+		if (this._FlowView && this._FlowView._CursorManager)
+		{
+			this._FlowView._CursorManager.update();
+		}
+	}
+
+	/**
 	 * Handle pointer down event
 	 * @param {PointerEvent} pEvent
 	 */
@@ -190,6 +250,59 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		if (pEvent.button === 0)
 		{
 			this._SVGElement.setPointerCapture(pEvent.pointerId);
+		}
+
+		// Read-only / presentation mode: a reduced dispatch. Selection, node
+		// activation (so a host can open a read-only inspector), and panning are
+		// allowed; every editing interaction (drag, resize, connect, handle add,
+		// panel edit) is inert.
+		if (this._isReadOnly())
+		{
+			// Hand tool on (navigation enabled): a drag anywhere grabs and pans the canvas, including
+			// over a card — you are moving the viewport, like the Photoshop hand. No selection here.
+			if (this._isReadOnlyNavigating())
+			{
+				if (pEvent.button === 0 && this._FlowView.options.EnablePanning)
+				{
+					this._startPanning(pEvent);
+				}
+				return;
+			}
+
+			// Hand off (static): selection + node activation for inspection; the canvas does not move.
+			switch (tmpElementType)
+			{
+				case 'node':
+				case 'node-body':
+				case 'panel-indicator':
+				{
+					let tmpNodeHash = this._getNodeHash(tmpTarget);
+					if (tmpNodeHash)
+					{
+						this._FlowView.selectNode(tmpNodeHash);
+						let tmpNode = this._FlowView.getNode(tmpNodeHash);
+						if (tmpNode && this._FlowView._EventHandlerProvider)
+						{
+							this._FlowView._EventHandlerProvider.fireEvent('onNodeActivate', tmpNode);
+						}
+					}
+					break;
+				}
+
+				case 'connection':
+				case 'connection-hitarea':
+					this._selectConnection(tmpTarget);
+					break;
+
+				case 'tether':
+				case 'tether-hitarea':
+					this._selectTether(tmpTarget);
+					break;
+
+				default:
+					break;
+			}
+			return;
 		}
 
 		switch (tmpElementType)
@@ -243,6 +356,18 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 
 			case 'node-resize':
 				this._startNodeResize(pEvent, tmpTarget);
+				break;
+
+			case 'node-rotate':
+				this._startNodeRotate(pEvent, tmpTarget);
+				break;
+
+			case 'frame-resize':
+				this._startFrameResize(pEvent, tmpTarget);
+				break;
+
+			case 'frame-move':
+				this._startFrameMove(pEvent, tmpTarget);
 				break;
 
 			case 'panel-close':
@@ -417,6 +542,18 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 				this._onNodeResize(pEvent);
 				break;
 
+			case INTERACTION_STATES.RESIZING_FRAME:
+				this._onFrameResize(pEvent);
+				break;
+
+			case INTERACTION_STATES.MOVING_FRAME:
+				this._onFrameMove(pEvent);
+				break;
+
+			case INTERACTION_STATES.ROTATING_NODE:
+				this._onNodeRotate(pEvent);
+				break;
+
 			case INTERACTION_STATES.PANNING:
 				this._onPan(pEvent);
 				break;
@@ -463,6 +600,15 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 				this._endNodeResize(pEvent);
 				break;
 
+			case INTERACTION_STATES.RESIZING_FRAME:
+			case INTERACTION_STATES.MOVING_FRAME:
+				this._endFrameEdit(pEvent);
+				break;
+
+			case INTERACTION_STATES.ROTATING_NODE:
+				this._endNodeRotate(pEvent);
+				break;
+
 			case INTERACTION_STATES.CONNECTING:
 				this._endConnection(pEvent);
 				break;
@@ -478,24 +624,98 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 	}
 
 	/**
-	 * Handle mouse wheel for zoom
+	 * Decide what a wheel event should do, from config and modifier keys. Pure
+	 * (no DOM, no side effects) so it is unit testable.
+	 *
+	 * WheelMode 'zoom' (default): wheel zooms; if WheelZoomRequiresModifier is on,
+	 *   a plain wheel pans and ctrl/cmd+wheel zooms.
+	 * WheelMode 'pan': wheel pans; ctrl/cmd+wheel zooms.
+	 * WheelMode 'none': flow ignores the wheel (page scrolls).
+	 *
+	 * Zoom is gated by EnableZooming and pan by EnablePanning; when the intended
+	 * action is disabled the result is 'none' (matching the legacy early return
+	 * when zooming was off).
+	 *
+	 * @param {WheelEvent} pEvent
+	 * @returns {{action: string}} action is 'zoom' | 'pan' | 'none'
+	 */
+	_resolveWheelAction(pEvent)
+	{
+		let tmpOptions = (this._FlowView && this._FlowView.options) ? this._FlowView.options : {};
+
+		// Read-only has its own wheel policy: by default the wheel scrolls the page
+		// (the canvas is static content); only when navigation is toggled on (the
+		// hand toggle) does the wheel zoom the canvas.
+		if (this._isReadOnly())
+		{
+			return { action: this._isReadOnlyNavigating() ? 'zoom' : 'none' };
+		}
+
+		let tmpWheelMode = tmpOptions.WheelMode || 'zoom';
+
+		if (tmpWheelMode === 'none')
+		{
+			return { action: 'none' };
+		}
+
+		let tmpModifier = !!(pEvent && (pEvent.ctrlKey || pEvent.metaKey));
+
+		let tmpWantZoom;
+		if (tmpWheelMode === 'pan')
+		{
+			tmpWantZoom = tmpModifier;
+		}
+		else
+		{
+			tmpWantZoom = tmpOptions.WheelZoomRequiresModifier ? tmpModifier : true;
+		}
+
+		if (tmpWantZoom)
+		{
+			return { action: tmpOptions.EnableZooming ? 'zoom' : 'none' };
+		}
+
+		return { action: (tmpOptions.EnablePanning === false) ? 'none' : 'pan' };
+	}
+
+	/**
+	 * Handle mouse wheel: zoom toward the pointer, pan the canvas, or ignore,
+	 * per _resolveWheelAction.
 	 * @param {WheelEvent} pEvent
 	 */
 	_onWheel(pEvent)
 	{
-		if (!this._FlowView || !this._FlowView.options.EnableZooming) return;
+		if (!this._FlowView) return;
+
+		let tmpResolved = this._resolveWheelAction(pEvent);
+		if (tmpResolved.action === 'none') return;
 
 		pEvent.preventDefault();
 
-		let tmpDelta = pEvent.deltaY > 0 ? -this._FlowView.options.ZoomStep : this._FlowView.options.ZoomStep;
-		let tmpNewZoom = this._FlowView.viewState.Zoom + tmpDelta;
+		let tmpOptions = this._FlowView.options;
 
-		// Zoom toward mouse position
-		let tmpRect = this._SVGElement.getBoundingClientRect();
-		let tmpMouseX = pEvent.clientX - tmpRect.left;
-		let tmpMouseY = pEvent.clientY - tmpRect.top;
+		if (tmpResolved.action === 'zoom')
+		{
+			let tmpSensitivity = (typeof tmpOptions.WheelZoomSensitivity === 'number') ? tmpOptions.WheelZoomSensitivity : 1;
+			let tmpStep = tmpOptions.ZoomStep * tmpSensitivity;
+			let tmpDelta = pEvent.deltaY > 0 ? -tmpStep : tmpStep;
+			let tmpNewZoom = this._FlowView.viewState.Zoom + tmpDelta;
 
-		this._FlowView.setZoom(tmpNewZoom, tmpMouseX, tmpMouseY);
+			// Zoom toward mouse position
+			let tmpRect = this._SVGElement.getBoundingClientRect();
+			let tmpMouseX = pEvent.clientX - tmpRect.left;
+			let tmpMouseY = pEvent.clientY - tmpRect.top;
+
+			this._FlowView.setZoom(tmpNewZoom, tmpMouseX, tmpMouseY);
+			return;
+		}
+
+		// Pan: wheel scrolls the canvas. Shift+wheel commonly arrives as deltaX.
+		let tmpPanSensitivity = (typeof tmpOptions.WheelPanSensitivity === 'number') ? tmpOptions.WheelPanSensitivity : 1;
+		if (this._FlowView._ViewportManager && typeof this._FlowView._ViewportManager.panBy === 'function')
+		{
+			this._FlowView._ViewportManager.panBy(-pEvent.deltaX * tmpPanSensitivity, -pEvent.deltaY * tmpPanSensitivity);
+		}
 	}
 
 	/**
@@ -509,6 +729,9 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		// Only handle events when the flow is focused/visible
 		if (pEvent.key === 'Delete' || pEvent.key === 'Backspace')
 		{
+			// No deletion in read-only mode.
+			if (this._isReadOnly()) return;
+
 			// Don't delete if user is typing in an input or inside a panel
 			if (pEvent.target && (pEvent.target.tagName === 'INPUT' || pEvent.target.tagName === 'TEXTAREA' || pEvent.target.tagName === 'SELECT'))
 			{
@@ -579,12 +802,10 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		}
 		if (this._DragNodes.length === 0) return;
 
-		this._State = INTERACTION_STATES.DRAGGING_NODE;
+		this._setState(INTERACTION_STATES.DRAGGING_NODE);
 		this._DragNodeHash = tmpNodeHash;
 		this._DragStartX = pEvent.clientX;
 		this._DragStartY = pEvent.clientY;
-
-		this._SVGElement.classList.add('panning');
 
 		for (let i = 0; i < this._DragNodes.length; i++)
 		{
@@ -735,9 +956,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 	}
 
 	_endNodeDrag(pEvent)
-	{
-		this._SVGElement.classList.remove('panning');
-		this._clearGuides();
+	{		this._clearGuides();
 
 		let tmpDragged = this._DragNodes || [];
 		for (let i = 0; i < tmpDragged.length; i++)
@@ -759,7 +978,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', this._FlowView.flowData);
 		}
 
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 		this._DragNodeHash = null;
 		this._DragNodes = null;
 	}
@@ -774,14 +993,12 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		let tmpPanel = this._FlowView._FlowData.OpenPanels.find((pPanel) => pPanel.Hash === tmpPanelHash);
 		if (!tmpPanel) return;
 
-		this._State = INTERACTION_STATES.DRAGGING_PANEL;
+		this._setState(INTERACTION_STATES.DRAGGING_PANEL);
 		this._DragPanelHash = tmpPanelHash;
 		this._DragPanelStartX = pEvent.clientX;
 		this._DragPanelStartY = pEvent.clientY;
 		this._DragPanelDataStartX = tmpPanel.X;
 		this._DragPanelDataStartY = tmpPanel.Y;
-
-		this._SVGElement.classList.add('panning');
 	}
 
 	_onPanelDrag(pEvent)
@@ -800,8 +1017,6 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 
 	_endPanelDrag(pEvent)
 	{
-		this._SVGElement.classList.remove('panning');
-
 		this._FlowView.marshalFromView();
 
 		let tmpPanel = this._FlowView._FlowData.OpenPanels.find((pPanel) => pPanel.Hash === this._DragPanelHash);
@@ -811,7 +1026,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', this._FlowView.flowData);
 		}
 
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 		this._DragPanelHash = null;
 	}
 
@@ -825,12 +1040,10 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		let tmpPanel = this._FlowView._FlowData.OpenPanels.find((pPanel) => pPanel.Hash === tmpPanelHash);
 		if (!tmpPanel) return;
 
-		this._State = INTERACTION_STATES.RESIZING_PANEL;
+		this._setState(INTERACTION_STATES.RESIZING_PANEL);
 		this._ResizePanelHash = tmpPanelHash;
 		this._ResizeStartY = pEvent.clientY;
 		this._ResizePanelStartHeight = tmpPanel.Height;
-
-		this._SVGElement.classList.add('panning');
 	}
 
 	_onPanelResize(pEvent)
@@ -861,8 +1074,6 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 
 	_endPanelResize(pEvent)
 	{
-		this._SVGElement.classList.remove('panning');
-
 		// Re-render to sync tethers
 		this._FlowView.renderFlow();
 		this._FlowView.marshalFromView();
@@ -872,7 +1083,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', this._FlowView.flowData);
 		}
 
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 		this._ResizePanelHash = null;
 	}
 
@@ -891,14 +1102,12 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		let tmpNode = this._FlowView.getNode(tmpNodeHash);
 		if (!tmpNode) return;
 
-		this._State = INTERACTION_STATES.RESIZING_NODE;
+		this._setState(INTERACTION_STATES.RESIZING_NODE);
 		this._ResizeNodeHash = tmpNodeHash;
 		this._ResizeNodeStartX = pEvent.clientX;
 		this._ResizeNodeStartY = pEvent.clientY;
 		this._ResizeNodeStartWidth = tmpNode.Width || 180;
 		this._ResizeNodeStartHeight = tmpNode.Height || 80;
-
-		this._SVGElement.classList.add('panning');
 		if (pEvent.stopPropagation) pEvent.stopPropagation();
 	}
 
@@ -925,8 +1134,6 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 
 	_endNodeResize(pEvent)
 	{
-		this._SVGElement.classList.remove('panning');
-
 		this._FlowView.renderFlow();
 		this._FlowView.marshalFromView();
 
@@ -937,23 +1144,208 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', this._FlowView.flowData);
 		}
 
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 		this._ResizeNodeHash = null;
+	}
+
+	// ---- Content-frame editing (drag the view-area box) ----
+
+	_startFrameResize(pEvent, pTarget)
+	{
+		if (!this._FlowView.options.EnableFrameEditing) return;
+		let tmpFrame = this._FlowView._resolveFrame();
+		if (!tmpFrame) return;
+
+		this._setState(INTERACTION_STATES.RESIZING_FRAME);
+		this._FrameDragEdge = (pTarget && pTarget.getAttribute) ? pTarget.getAttribute('data-frame-edge') : null;
+		this._FrameStart = { X: tmpFrame.X || 0, Y: tmpFrame.Y || 0, Width: tmpFrame.Width, Height: tmpFrame.Height };
+		this._FrameStartPointerX = pEvent.clientX;
+		this._FrameStartPointerY = pEvent.clientY;
+		if (pEvent.stopPropagation) pEvent.stopPropagation();
+	}
+
+	_startFrameMove(pEvent, pTarget)
+	{
+		if (!this._FlowView.options.EnableFrameEditing) return;
+		let tmpFrame = this._FlowView._resolveFrame();
+		if (!tmpFrame) return;
+
+		this._setState(INTERACTION_STATES.MOVING_FRAME);
+		this._FrameStart = { X: tmpFrame.X || 0, Y: tmpFrame.Y || 0, Width: tmpFrame.Width, Height: tmpFrame.Height };
+		this._FrameStartPointerX = pEvent.clientX;
+		this._FrameStartPointerY = pEvent.clientY;
+		if (pEvent.stopPropagation) pEvent.stopPropagation();
+	}
+
+	_onFrameResize(pEvent)
+	{
+		if (!this._FrameStart) return;
+		let tmpVS = this._FlowView.viewState;
+		let tmpDX = (pEvent.clientX - this._FrameStartPointerX) / tmpVS.Zoom;
+		let tmpDY = (pEvent.clientY - this._FrameStartPointerY) / tmpVS.Zoom;
+		let tmpMin = this._FlowView.options.MinimumFrameSize || 40;
+		this._applyFrameEdit(PictServiceFlowInteractionManager.computeFrameResize(this._FrameStart, this._FrameDragEdge, tmpDX, tmpDY, tmpMin));
+	}
+
+	_onFrameMove(pEvent)
+	{
+		if (!this._FrameStart) return;
+		let tmpVS = this._FlowView.viewState;
+		let tmpDX = (pEvent.clientX - this._FrameStartPointerX) / tmpVS.Zoom;
+		let tmpDY = (pEvent.clientY - this._FrameStartPointerY) / tmpVS.Zoom;
+		this._applyFrameEdit(
+			{
+				X: Math.round(this._FrameStart.X + tmpDX),
+				Y: Math.round(this._FrameStart.Y + tmpDY),
+				Width: this._FrameStart.Width,
+				Height: this._FrameStart.Height
+			});
+	}
+
+	_applyFrameEdit(pBox)
+	{
+		let tmpFrame = this._FlowView._resolveFrame();
+		if (!tmpFrame) return;
+		tmpFrame.X = pBox.X;
+		tmpFrame.Y = pBox.Y;
+		tmpFrame.Width = pBox.Width;
+		tmpFrame.Height = pBox.Height;
+		this._FlowView._applyFrame();
+	}
+
+	_endFrameEdit(pEvent)
+	{
+		let tmpFrame = this._FlowView._resolveFrame();
+		this._FlowView._applyFrame();
+		if (typeof this._FlowView.marshalFromView === 'function') this._FlowView.marshalFromView();
+		if (this._FlowView._EventHandlerProvider)
+		{
+			this._FlowView._EventHandlerProvider.fireEvent('onFrameChanged', tmpFrame);
+			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', this._FlowView.flowData);
+		}
+		this._setState(INTERACTION_STATES.IDLE);
+		this._FrameDragEdge = null;
+		this._FrameStart = null;
+	}
+
+	/**
+	 * Pure box-resize math for the content frame: given the starting box, which edge is being
+	 * dragged ('n'|'e'|'s'|'w'), and the pointer delta in content units, return the new box,
+	 * clamped to a minimum size with the opposite edge held fixed. Unit tested without a DOM.
+	 * @param {Object} pStart - { X, Y, Width, Height }
+	 * @param {string} pEdge
+	 * @param {number} pDX
+	 * @param {number} pDY
+	 * @param {number} [pMinSize]
+	 * @returns {{X:number, Y:number, Width:number, Height:number}}
+	 */
+	static computeFrameResize(pStart, pEdge, pDX, pDY, pMinSize)
+	{
+		let tmpMin = (typeof pMinSize === 'number') ? pMinSize : 40;
+		let tmpX = pStart.X;
+		let tmpY = pStart.Y;
+		let tmpW = pStart.Width;
+		let tmpH = pStart.Height;
+		switch (pEdge)
+		{
+			case 'n':
+			{
+				let tmpNewY = pStart.Y + pDY;
+				let tmpNewH = pStart.Height - pDY;
+				if (tmpNewH < tmpMin) { tmpNewY = pStart.Y + (pStart.Height - tmpMin); tmpNewH = tmpMin; }
+				tmpY = Math.round(tmpNewY);
+				tmpH = Math.round(tmpNewH);
+				break;
+			}
+			case 's':
+				tmpH = Math.round(Math.max(tmpMin, pStart.Height + pDY));
+				break;
+			case 'e':
+				tmpW = Math.round(Math.max(tmpMin, pStart.Width + pDX));
+				break;
+			case 'w':
+			{
+				let tmpNewX = pStart.X + pDX;
+				let tmpNewW = pStart.Width - pDX;
+				if (tmpNewW < tmpMin) { tmpNewX = pStart.X + (pStart.Width - tmpMin); tmpNewW = tmpMin; }
+				tmpX = Math.round(tmpNewX);
+				tmpW = Math.round(tmpNewW);
+				break;
+			}
+		}
+		return { X: tmpX, Y: tmpY, Width: tmpW, Height: tmpH };
+	}
+
+	// ---- Node Rotation ----
+	// Drag the grip on the arm above the selected node (rendered when EnableNodeRotation is on) to set
+	// the node's Rotation in degrees: the card's top points toward the pointer. Hold Shift to snap to 15
+	// degrees. The properties-panel rotation control still works; this is just a second, inline way.
+
+	_startNodeRotate(pEvent, pTarget)
+	{
+		if (!this._FlowView.options.EnableNodeRotation) return;
+		if (this._isReadOnly()) return;
+
+		let tmpNodeHash = this._getNodeHash(pTarget);
+		if (!tmpNodeHash) return;
+		if (!this._FlowView.getNode(tmpNodeHash)) return;
+
+		this._setState(INTERACTION_STATES.ROTATING_NODE);
+		this._RotateNodeHash = tmpNodeHash;
+		if (pEvent.stopPropagation) pEvent.stopPropagation();
+	}
+
+	_onNodeRotate(pEvent)
+	{
+		if (!this._RotateNodeHash) return;
+
+		let tmpNode = this._FlowView.getNode(this._RotateNodeHash);
+		if (!tmpNode) return;
+
+		let tmpCenterX = (tmpNode.X || 0) + (tmpNode.Width || 0) / 2;
+		let tmpCenterY = (tmpNode.Y || 0) + (tmpNode.Height || 0) / 2;
+
+		// Pointer in content (SVG) space so pan/zoom do not skew the angle.
+		let tmpPoint = this._FlowView.screenToSVGCoords(pEvent.clientX, pEvent.clientY);
+		let tmpAngle = (Math.atan2(tmpPoint.y - tmpCenterY, tmpPoint.x - tmpCenterX) * 180 / Math.PI) + 90;
+
+		// Shift snaps to 15-degree increments.
+		if (pEvent.shiftKey) { tmpAngle = Math.round(tmpAngle / 15) * 15; }
+
+		// Normalize to [0, 360).
+		tmpAngle = ((Math.round(tmpAngle) % 360) + 360) % 360;
+		tmpNode.Rotation = tmpAngle;
+
+		this._FlowView.renderFlow();
+	}
+
+	_endNodeRotate(pEvent)
+	{
+		this._FlowView.renderFlow();
+		this._FlowView.marshalFromView();
+
+		let tmpNode = this._FlowView.getNode(this._RotateNodeHash);
+		if (tmpNode && this._FlowView._EventHandlerProvider)
+		{
+			this._FlowView._EventHandlerProvider.fireEvent('onNodeRotated', tmpNode);
+			this._FlowView._EventHandlerProvider.fireEvent('onFlowChanged', this._FlowView.flowData);
+		}
+
+		this._setState(INTERACTION_STATES.IDLE);
+		this._RotateNodeHash = null;
 	}
 
 	// ---- Handle Dragging ----
 
 	_startHandleDrag(pEvent, pConnectionHash, pPanelHash, pHandleType, pIsTether)
 	{
-		this._State = INTERACTION_STATES.DRAGGING_HANDLE;
+		this._setState(INTERACTION_STATES.DRAGGING_HANDLE);
 		this._DragHandleConnectionHash = pConnectionHash;
 		this._DragHandlePanelHash = pPanelHash;
 		this._DragHandleType = pHandleType;
 		this._DragHandleIsTether = pIsTether;
 		this._DragStartX = pEvent.clientX;
-		this._DragStartY = pEvent.clientY;
-		this._SVGElement.classList.add('panning');
-	}
+		this._DragStartY = pEvent.clientY;	}
 
 	_onHandleDrag(pEvent)
 	{
@@ -981,8 +1373,6 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 
 	_endHandleDrag(pEvent)
 	{
-		this._SVGElement.classList.remove('panning');
-
 		this._FlowView.renderFlow();
 		this._FlowView.marshalFromView();
 
@@ -1008,7 +1398,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			}
 		}
 
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 		this._DragHandleConnectionHash = null;
 		this._DragHandlePanelHash = null;
 		this._DragHandleType = null;
@@ -1169,11 +1559,9 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			return;
 		}
 
-		this._State = INTERACTION_STATES.CONNECTING;
+		this._setState(INTERACTION_STATES.CONNECTING);
 		this._ConnectSourceNodeHash = tmpNodeHash;
 		this._ConnectSourcePortHash = tmpPortHash;
-
-		this._SVGElement.classList.add('connecting');
 
 		let tmpPortPos = this._FlowView.getPortPosition(tmpNodeHash, tmpPortHash);
 		if (tmpPortPos)
@@ -1209,8 +1597,6 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		}
 		this._ConnectDragLine = null;
 
-		this._SVGElement.classList.remove('connecting');
-
 		let tmpTarget = document.elementFromPoint(pEvent.clientX, pEvent.clientY);
 		if (tmpTarget)
 		{
@@ -1230,7 +1616,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			}
 		}
 
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 		this._ConnectSourceNodeHash = null;
 		this._ConnectSourcePortHash = null;
 	}
@@ -1243,9 +1629,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		}
 		this._ConnectDragLine = null;
 
-		this._SVGElement.classList.remove('connecting');
-
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 		this._ConnectSourceNodeHash = null;
 		this._ConnectSourcePortHash = null;
 	}
@@ -1256,13 +1640,11 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 	{
 		this._FlowView.deselectAll();
 
-		this._State = INTERACTION_STATES.PANNING;
+		this._setState(INTERACTION_STATES.PANNING);
 		this._PanStartX = pEvent.clientX;
 		this._PanStartY = pEvent.clientY;
 		this._PanStartPanX = this._FlowView.viewState.PanX;
 		this._PanStartPanY = this._FlowView.viewState.PanY;
-
-		this._SVGElement.classList.add('panning');
 	}
 
 	_onPan(pEvent)
@@ -1277,9 +1659,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 	}
 
 	_endPanning(pEvent)
-	{
-		this._SVGElement.classList.remove('panning');
-		this._State = INTERACTION_STATES.IDLE;
+	{		this._setState(INTERACTION_STATES.IDLE);
 	}
 
 	// ---- Marquee selection (multi-select) ----
@@ -1295,7 +1675,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 		this._MarqueeStartY = tmpStart.y;
 		this._MarqueeCurrentX = tmpStart.x;
 		this._MarqueeCurrentY = tmpStart.y;
-		this._State = INTERACTION_STATES.MARQUEE;
+		this._setState(INTERACTION_STATES.MARQUEE);
 
 		let tmpRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
 		tmpRect.setAttribute('class', 'pict-flow-marquee');
@@ -1333,7 +1713,7 @@ class PictServiceFlowInteractionManager extends libFableServiceProviderBase
 			this._MarqueeElement.parentNode.removeChild(this._MarqueeElement);
 		}
 		this._MarqueeElement = null;
-		this._State = INTERACTION_STATES.IDLE;
+		this._setState(INTERACTION_STATES.IDLE);
 
 		// Too small to be a deliberate drag: treat as a background click and clear the selection.
 		if (tmpW < 4 && tmpH < 4)

@@ -4,21 +4,23 @@ const libExpect = libChai.expect;
 
 const libLayoutService = require('../source/services/PictService-Flow-Layout.js');
 
-const libLayoutCustom           = require('../source/providers/layouts/Layout-Custom.js');
-const libLayoutLayered          = require('../source/providers/layouts/Layout-Layered.js');
-const libLayoutStaggered        = require('../source/providers/layouts/Layout-Staggered.js');
-const libLayoutRank             = require('../source/providers/layouts/Layout-Rank.js');
-const libLayoutForcedFromCenter = require('../source/providers/layouts/Layout-ForcedFromCenter.js');
-const libLayoutGrid             = require('../source/providers/layouts/Layout-Grid.js');
-const libLayoutCircular         = require('../source/providers/layouts/Layout-Circular.js');
-const libLayoutTabular          = require('../source/providers/layouts/Layout-Tabular.js');
-const libLayoutColumnar         = require('../source/providers/layouts/Layout-Columnar.js');
+const libGraphLayout = require('pict-provider-graphlayout');
 
-const libEdgeBezier         = require('../source/providers/edges/Edge-Bezier.js');
-const libEdgeOrthogonal     = require('../source/providers/edges/Edge-Orthogonal.js');
-const libEdgeStraight       = require('../source/providers/edges/Edge-Straight.js');
-const libEdgeOrthogonalSnap = require('../source/providers/edges/Edge-OrthogonalSnap.js');
-const libEdgePerimeter      = require('../source/providers/edges/Edge-Perimeter.js');
+const libLayoutCustom           = libGraphLayout.Layouts.Custom;
+const libLayoutLayered          = libGraphLayout.Layouts.Layered;
+const libLayoutStaggered        = libGraphLayout.Layouts.Staggered;
+const libLayoutRank             = libGraphLayout.Layouts.Rank;
+const libLayoutForcedFromCenter = libGraphLayout.Layouts.ForcedFromCenter;
+const libLayoutGrid             = libGraphLayout.Layouts.Grid;
+const libLayoutCircular         = libGraphLayout.Layouts.Circular;
+const libLayoutTabular          = libGraphLayout.Layouts.Tabular;
+const libLayoutColumnar         = libGraphLayout.Layouts.Columnar;
+
+const libEdgeBezier         = libGraphLayout.Edges.Bezier;
+const libEdgeOrthogonal     = libGraphLayout.Edges.Orthogonal;
+const libEdgeStraight       = libGraphLayout.Edges.Straight;
+const libEdgeOrthogonalSnap = libGraphLayout.Edges.OrthogonalSnap;
+const libEdgePerimeter      = libGraphLayout.Edges.Perimeter;
 
 function makeNodes(pCount)
 {

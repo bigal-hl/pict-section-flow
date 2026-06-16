@@ -19,9 +19,12 @@ function ()
 		test('the flow view defaults to no extra buttons and no hook',
 		function ()
 		{
-			libExpect(libPictViewFlow.default_configuration.ToolbarExtraButtons).to.be.an('array');
-			libExpect(libPictViewFlow.default_configuration.ToolbarExtraButtons.length).to.equal(0);
-			libExpect(libPictViewFlow.default_configuration.onToolbarButton).to.equal(false);
+			// default_configuration is no longer exported (Pict would pre-merge it and clobber
+			// Profiles); the resolved defaults come from mergeProfileOptions({}).
+			let tmpDefaults = libPictViewFlow.mergeProfileOptions({});
+			libExpect(tmpDefaults.ToolbarExtraButtons).to.be.an('array');
+			libExpect(tmpDefaults.ToolbarExtraButtons.length).to.equal(0);
+			libExpect(tmpDefaults.onToolbarButton).to.equal(false);
 		});
 
 		test('both toolbar views default to an empty extra-button list',
@@ -85,6 +88,22 @@ function ()
 			};
 			libPictViewFlowToolbar.prototype._stampExtraButtons.call(tmpStub);
 			libExpect(tmpStub.options.ToolbarExtraButtons[0].ActiveClass).to.equal(' pict-flow-toolbar-btn-active');
+		});
+
+		test('a Toggle button gets the toggle class (for its status LED); an action button does not',
+		function ()
+		{
+			let tmpStub =
+			{
+				options:
+				{
+					FlowViewIdentifier: 'Pict-Flow',
+					ToolbarExtraButtons: [ { Hash: 'pan', Icon: 'pan', Toggle: true }, { Hash: 'edit', Icon: 'edit' } ]
+				}
+			};
+			libPictViewFlowToolbar.prototype._stampExtraButtons.call(tmpStub);
+			libExpect(tmpStub.options.ToolbarExtraButtons[0].ToggleClass).to.equal(' pict-flow-toolbar-btn-toggle');
+			libExpect(tmpStub.options.ToolbarExtraButtons[1].ToggleClass).to.equal('');
 		});
 
 		test('a non-array extra-button option is tolerated',

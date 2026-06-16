@@ -12,6 +12,7 @@ const libPictServiceFlowDataManager = require('../services/PictService-Flow-Data
 const libPictServiceFlowConnectionHandleManager = require('../services/PictService-Flow-ConnectionHandleManager.js');
 const libPictServiceFlowRenderManager = require('../services/PictService-Flow-RenderManager.js');
 const libPictServiceFlowPortRenderer = require('../services/PictService-Flow-PortRenderer.js');
+const libPictServiceFlowCursorManager = require('../services/PictService-Flow-CursorManager.js');
 
 const libPictProviderFlowNodeTypes = require('../providers/PictProvider-Flow-NodeTypes.js');
 const libPictProviderFlowEventHandler = require('../providers/PictProvider-Flow-EventHandler.js');
@@ -26,6 +27,7 @@ const libPictProviderFlowTheme = require('../providers/PictProvider-Flow-Theme.j
 const libPictProviderFlowRenderer = require('../providers/PictProvider-Flow-Renderer.js');
 const libPictProviderFlowStylePresets = require('../providers/PictProvider-Flow-StylePresets.js');
 const libPictProviderFlowNoise = require('../providers/PictProvider-Flow-Noise.js');
+const libPictProviderFlowBackground = require('../providers/PictProvider-Flow-Background.js');
 
 const libPictViewFlowNode = require('./PictView-Flow-Node.js');
 const libPictViewFlowToolbar = require('./PictView-Flow-Toolbar.js');
@@ -51,6 +53,11 @@ const _DefaultConfiguration =
 
 	TargetElementAddress: '#Flow-SVG-Container',
 
+	// Config profile: expands into a coherent bundle of the options below before
+	// your explicit options apply. null/'graph' = the historical behavior; also
+	// 'whiteboard', 'moodboard', 'presentation', 'erd'.
+	Profile: null,
+
 	EnableToolbar: true,
 	EnableAddNode: true,
 	EnableCardPalette: true,
@@ -67,6 +74,10 @@ const _DefaultConfiguration =
 	// When on, the selected node shows a bottom-right grip that resizes it by drag. Off by default
 	// so existing diagrams are unaffected; free-form canvases (moodboards) turn it on.
 	EnableNodeResizing: false,
+	// When on, the selected node shows a rotate grip on an arm above it; drag it to set the node's
+	// Rotation (degrees), Shift to snap to 15. Off by default; free-form canvases turn it on. The
+	// properties panel can still set Rotation directly, so both ways work.
+	EnableNodeRotation: false,
 	EnableGridSnap: false,
 	GridSnapSize: 20,
 	// When on, several nodes can be selected at once: shift-click a node to toggle it, drag on the
@@ -77,6 +88,14 @@ const _DefaultConfiguration =
 	// line up with other nodes. Off by default; free-form canvases turn it on.
 	EnableAlignmentGuides: false,
 	EnableLayoutMenu: true,
+
+	// Read-only / presentation mode. When true, editing interactions are inert
+	// (no drag, resize, connect, delete, panel edit); panning, zoom, selection,
+	// and node activation still work, and an onNodeActivate event fires on a node
+	// click so a host can show a read-only inspector. Toggle at runtime with
+	// setReadOnly(). The container also gets a 'pict-flow-readonly' class so chrome
+	// (ports, delete affordance, resize grips) can be hidden via CSS.
+	ReadOnly: false,
 
 	// Host-supplied toolbar buttons. Each entry is { Hash, Icon, Label?, Tooltip?, Active? } where Icon
 	// is a flow icon-provider key (edit, check, background, ...). They render in BOTH the docked and the
@@ -90,6 +109,41 @@ const _DefaultConfiguration =
 	MinZoom: 0.1,
 	MaxZoom: 5.0,
 	ZoomStep: 0.1,
+
+	// Mouse-wheel behavior. 'zoom' (default) keeps the historical wheel-zoom; set
+	// 'pan' so the wheel scrolls the canvas (ctrl/cmd+wheel still zooms), or
+	// 'none' to ignore the wheel. WheelZoomRequiresModifier makes a plain wheel
+	// pan and only ctrl/cmd+wheel zoom while in 'zoom' mode (tames the
+	// "scrolling zooms too fast" feel). Sensitivities scale the per-tick amount.
+	WheelMode: 'zoom',
+	WheelZoomRequiresModifier: false,
+	WheelZoomSensitivity: 1,
+	WheelPanSensitivity: 1,
+
+	// Canvas background. false (default) keeps the built-in grid from the
+	// container template. Set an object to control it natively:
+	//   { Style: 'grid'|'dots'|'solid'|'image'|'none', Color?, Image?, GridSize?, DotSize? }
+	// This replaces hand-painting the SVG from a consumer.
+	Background: false,
+
+	// Content frame: a dashed "page" rectangle in content space marking the
+	// intended bounds (origin + width + preferred end). false (default) draws
+	// nothing. Set { Enabled?, X, Y, Width, Height, FitOnLoad? }; fitToFrame()
+	// fits it to the viewport (handy for read-only / presentation). Drag-to-resize
+	// handles are a later addition.
+	Frame: false,
+
+	// Presentation fit. 'contain' (default) keeps the legacy fitToFrame/FitOnLoad
+	// behavior. 'width' fits the frame's WIDTH to the container (anchored top-left
+	// + FitTopMargin) and keeps it fit as the container resizes — the jumbotron /
+	// background / fullscreen presentation. Content outside the frame bleeds.
+	FitMode: 'contain',
+	FitTopMargin: 0,
+
+	// When true (and not read-only), the content frame gets drag handles: four edge
+	// handles to set top/width/height and a move handle to reposition the view-area box.
+	EnableFrameEditing: false,
+	MinimumFrameSize: 40,
 
 	DefaultNodeType: 'default',
 	DefaultNodeWidth: 180,
@@ -106,6 +160,15 @@ const _DefaultConfiguration =
 	DefaultLayoutAlgorithm: 'Custom',
 	DefaultLayoutParameters: {},
 	DefaultLayoutAutoApply: false,
+
+	// Saved layouts (named position snapshots). LayoutStorage lets a host wire a
+	// server / IndexedDB backend by config instead of overriding the layout
+	// provider's methods: { read(cb), write(layouts, cb), delete(cb) } with
+	// Node-style cb(err, result). false (default) uses localStorage. When
+	// ApplyDefaultLayoutOnLoad is on, the layout marked default is applied once
+	// the graph first renders.
+	LayoutStorage: false,
+	ApplyDefaultLayoutOnLoad: false,
 
 	// Edge-theme subsystem defaults — null = inherit from active layout's
 	// `DefaultEdgeTheme` field, with hard fallback to 'Bezier'.
@@ -175,11 +238,88 @@ const _DefaultConfiguration =
 	]
 };
 
+// Config profiles. Each is a partial option bundle that expands under the
+// defaults and beneath the host's explicit options, so a single Profile knob
+// gives a coherent setup that the host can still override field by field.
+const _PROFILES =
+{
+	// Directed graph editor (the historical default). Empty so the defaults stand.
+	graph: {},
+
+	// Free-form whiteboard: undirected links, resize, multi-select + alignment
+	// guides, wheel pans (ctrl/cmd zooms), dotted background, no layout menu.
+	whiteboard:
+	{
+		EnableUndirectedConnections: true,
+		EnableNodeResizing: true,
+		EnableNodeRotation: true,
+		EnableMultiSelect: true,
+		EnableAlignmentGuides: true,
+		EnableLayoutMenu: false,
+		WheelMode: 'pan',
+		WheelZoomRequiresModifier: true,
+		Background: { Style: 'dots' }
+	},
+
+	// Moodboard: free-form content cards, undirected links, no default node types
+	// or add-node button, edge-to-edge cards (no title bar), wheel pans.
+	moodboard:
+	{
+		EnableUndirectedConnections: true,
+		EnableNodeResizing: true,
+		EnableNodeRotation: true,
+		EnableAlignmentGuides: true,
+		EnableAddNode: false,
+		EnableLayoutMenu: false,
+		IncludeDefaultNodeTypes: false,
+		NodeTitleBarHeight: 0,
+		WheelMode: 'pan',
+		WheelZoomRequiresModifier: true,
+		// Flat, light canvas (no grid) by default; a host can recolor it via setBackground.
+		Background: { Style: 'solid', Color: '#f4f6f9' }
+	},
+
+	// Read-only presentation surface: no editing, no toolbar; plain wheel pans,
+	// ctrl/cmd wheel zooms.
+	presentation:
+	{
+		ReadOnly: true,
+		EnableToolbar: false,
+		WheelMode: 'pan',
+		WheelZoomRequiresModifier: true
+	},
+
+	// Entity-relationship diagrams (fleshed out in a later phase). Orthogonal
+	// edges read best for ERDs.
+	erd:
+	{
+		DefaultEdgeTheme: 'Orthogonal'
+	}
+};
+
 class PictViewFlow extends libPictView
 {
+	/**
+	 * Merge a Profile's option bundle between the defaults and the host's
+	 * explicit options: defaults < profile < pOptions. Pure (no side effects),
+	 * so it is unit testable without constructing the view.
+	 * @param {Object} pOptions - the host-supplied options (may name a Profile)
+	 * @returns {Object} the fully merged option set
+	 */
+	static mergeProfileOptions(pOptions)
+	{
+		let tmpProfileName = (pOptions && pOptions.Profile) ? pOptions.Profile : (_DefaultConfiguration.Profile || 'graph');
+		let tmpProfile = _PROFILES[tmpProfileName] || {};
+		return Object.assign(
+			{},
+			JSON.parse(JSON.stringify(_DefaultConfiguration)),
+			JSON.parse(JSON.stringify(tmpProfile)),
+			pOptions || {});
+	}
+
 	constructor(pFable, pOptions, pServiceHash)
 	{
-		let tmpOptions = Object.assign({}, JSON.parse(JSON.stringify(_DefaultConfiguration)), pOptions);
+		let tmpOptions = PictViewFlow.mergeProfileOptions(pOptions);
 		super(pFable, tmpOptions, pServiceHash);
 
 		this.serviceType = 'PictSectionFlow';
@@ -211,6 +351,7 @@ class PictViewFlow extends libPictView
 			{ ServiceType: 'PictProviderFlowNodeTypes',     Library: libPictProviderFlowNodeTypes,     Property: '_NodeTypeProvider',   ExtraOptions: () => ({ AdditionalNodeTypes: this.options.NodeTypes, IncludeDefaultNodeTypes: this.options.IncludeDefaultNodeTypes }) },
 			{ ServiceType: 'PictProviderFlowEventHandler',  Library: libPictProviderFlowEventHandler,  Property: '_EventHandlerProvider' },
 			{ ServiceType: 'PictProviderFlowLayouts',       Library: libPictProviderFlowLayouts,       Property: '_LayoutProvider',       PostInit: 'loadPersistedLayouts' },
+			{ ServiceType: 'PictProviderFlowBackground',    Library: libPictProviderFlowBackground,    Property: '_BackgroundProvider' },
 
 			// Services
 			{ ServiceType: 'PictServiceFlowPathGenerator',           Library: libPictServiceFlowPathGenerator,           Property: '_PathGenerator' },
@@ -219,6 +360,7 @@ class PictViewFlow extends libPictView
 			{ ServiceType: 'PictServiceFlowRenderManager',           Library: libPictServiceFlowRenderManager,           Property: '_RenderManager' },
 			{ ServiceType: 'PictServiceFlowPortRenderer',            Library: libPictServiceFlowPortRenderer,            Property: '_PortRenderer' },
 			{ ServiceType: 'PictServiceFlowInteractionManager',      Library: libPictServiceFlowInteractionManager,      Property: '_InteractionManager' },
+			{ ServiceType: 'PictServiceFlowCursorManager',           Library: libPictServiceFlowCursorManager,           Property: '_CursorManager' },
 			{ ServiceType: 'PictServiceFlowConnectionRenderer',      Library: libPictServiceFlowConnectionRenderer,      Property: '_ConnectionRenderer' },
 			{ ServiceType: 'PictServiceFlowTether',                  Library: libPictServiceFlowTether,                  Property: '_TetherService' },
 			{ ServiceType: 'PictServiceFlowLayout',                  Library: libPictServiceFlowLayout,                  Property: '_LayoutService' },
@@ -285,6 +427,7 @@ class PictViewFlow extends libPictView
 		this._PortRenderer = null;
 
 		this._InteractionManager = null;
+		this._CursorManager = null;
 		this._ConnectionRenderer = null;
 		this._TetherService = null;
 		this._LayoutService = null;
@@ -304,10 +447,25 @@ class PictViewFlow extends libPictView
 		this._PanelChromeProvider = null;
 		this._NodeTypeProvider = null;
 		this._LayoutProvider = null;
+		this._BackgroundProvider = null;
 		this._EventHandlerProvider = null;
 		this._NodeView = null;
 		this._ToolbarView = null;
 		this._PropertiesPanelView = null;
+
+		// Registry of renderable renderers keyed by RenderableType. The default
+		// 'card' renderer (the node view) is registered once it exists; consumers
+		// register additional renderers (shape, sticky, text, image, category,
+		// connector) to draw renderables that are not cards.
+		this._RenderableRenderers = {};
+
+		// Read-only / presentation flag (runtime; defaults to the option).
+		this._ReadOnly = !!this.options.ReadOnly;
+
+		// In read-only, canvas pan + wheel-zoom are OFF by default (the wheel scrolls the page and the
+		// canvas reads as static content). A host flips it on with a "hand" toggle via
+		// setReadOnlyNavigation. No effect in edit mode.
+		this._ReadOnlyNavigation = false;
 
 		this.initialRenderComplete = false;
 	}
@@ -322,6 +480,377 @@ class PictViewFlow extends libPictView
 				this.fable.addServiceType(tmpEntry.ServiceType, tmpEntry.Library);
 			}
 		}
+	}
+
+	/**
+	 * Register a renderable renderer under a key. The default 'card' renderer is
+	 * the node view; consumers register additional renderers (shape, sticky,
+	 * text, image, category, connector) to draw non-card renderables. A renderer
+	 * must expose renderNode(node, layerElement, isSelected, typeConfig).
+	 * @param {string} pKey
+	 * @param {Object} pRenderer
+	 * @returns {boolean}
+	 */
+	registerRenderableRenderer(pKey, pRenderer)
+	{
+		if (!pKey || !pRenderer)
+		{
+			return false;
+		}
+		this._RenderableRenderers[pKey] = pRenderer;
+		return true;
+	}
+
+	/**
+	 * Resolve the renderable renderer for a node. A node type may name its
+	 * renderer via the RenderableType field (default 'card'); unknown keys fall
+	 * back to the card renderer so existing diagrams are unaffected.
+	 * @param {Object} pNode
+	 * @param {Object} pNodeTypeConfig
+	 * @returns {Object} a renderer exposing renderNode(...)
+	 */
+	resolveRenderableRenderer(pNode, pNodeTypeConfig)
+	{
+		// A node may name its renderer directly via pNode.RenderableType (wins), else
+		// the node type config's RenderableType, else the default 'card'. The node-level
+		// override lets a free-form canvas mint shape/sticky/text renderables without
+		// registering a node type for each. Unknown keys fall back to card so existing
+		// diagrams are unaffected.
+		let tmpKey = 'card';
+		if (pNode && typeof pNode.RenderableType === 'string' && pNode.RenderableType)
+		{
+			tmpKey = pNode.RenderableType;
+		}
+		else if (pNodeTypeConfig && pNodeTypeConfig.RenderableType)
+		{
+			tmpKey = pNodeTypeConfig.RenderableType;
+		}
+		return this._RenderableRenderers[tmpKey] || this._RenderableRenderers['card'] || this._NodeView;
+	}
+
+	/**
+	 * Apply the configured canvas background to the live SVG. No-op when no
+	 * Background is configured (the template grid stands). Safe to call on every
+	 * render; idempotent.
+	 */
+	_applyBackground()
+	{
+		if (this._BackgroundProvider)
+		{
+			return this._BackgroundProvider.apply(this);
+		}
+		return false;
+	}
+
+	/**
+	 * Set the canvas background and repaint it. Pass an object
+	 * { Style, Color?, Image?, GridSize?, DotSize? } or false to clear it back to
+	 * the template grid. Stored on ViewState so it travels with the flow data.
+	 * @param {Object|false} pBackground
+	 */
+	setBackground(pBackground)
+	{
+		this._FlowData.ViewState.Background = pBackground || null;
+		return this._applyBackground();
+	}
+
+	/**
+	 * Whether the flow is in read-only / presentation mode.
+	 * @returns {boolean}
+	 */
+	isReadOnly()
+	{
+		return !!this._ReadOnly;
+	}
+
+	/**
+	 * Toggle read-only / presentation mode at runtime. Editing interactions go
+	 * inert; the container gets the 'pict-flow-readonly' class so chrome can be
+	 * hidden via CSS. Repaints so port/grip visibility updates.
+	 * @param {boolean} pReadOnly
+	 * @returns {boolean} the new read-only state
+	 */
+	setReadOnly(pReadOnly)
+	{
+		this._ReadOnly = !!pReadOnly;
+		// Navigation is a read-only concept; leaving read-only clears it.
+		if (!this._ReadOnly) { this._ReadOnlyNavigation = false; }
+		this._applyReadOnlyClass();
+		if (this._CursorManager) { this._CursorManager.update(); }
+		if (this.initialRenderComplete)
+		{
+			this.renderFlow();
+		}
+		return this._ReadOnly;
+	}
+
+	/**
+	 * Whether read-only canvas navigation (pan + wheel-zoom) is enabled. When off
+	 * (the default in read-only), the wheel scrolls the page and the canvas does
+	 * not pan, so it reads as static content.
+	 * @returns {boolean}
+	 */
+	isReadOnlyNavigation()
+	{
+		return !!this._ReadOnlyNavigation;
+	}
+
+	/**
+	 * Turn read-only canvas navigation (pan + wheel-zoom) on or off. This is the
+	 * "hand" toggle for a presentation surface; it has no effect in edit mode.
+	 * @param {boolean} pOn
+	 * @returns {boolean} the new navigation state
+	 */
+	setReadOnlyNavigation(pOn)
+	{
+		this._ReadOnlyNavigation = !!pOn;
+		this._applyReadOnlyClass();
+		if (this._CursorManager) { this._CursorManager.update(); }
+		if (this._EventHandlerProvider)
+		{
+			this._EventHandlerProvider.fireEvent('onReadOnlyNavigationChanged', this._ReadOnlyNavigation);
+		}
+		return this._ReadOnlyNavigation;
+	}
+
+	/**
+	 * Reflect the read-only flag as a class on the flow container so CSS can hide
+	 * editing chrome (ports, delete affordance, resize grips). Internal.
+	 */
+	_applyReadOnlyClass()
+	{
+		let tmpWrapper = this.pict.ContentAssignment.getElement(`#Flow-Wrapper-${this.options.ViewIdentifier}`);
+		if (tmpWrapper && tmpWrapper.length > 0 && tmpWrapper[0].classList)
+		{
+			if (this._ReadOnly)
+			{
+				tmpWrapper[0].classList.add('pict-flow-readonly');
+			}
+			else
+			{
+				tmpWrapper[0].classList.remove('pict-flow-readonly');
+			}
+			// 'navigating' = read-only with pan/zoom enabled; drives the grab cursor.
+			if (this._ReadOnly && this._ReadOnlyNavigation)
+			{
+				tmpWrapper[0].classList.add('pict-flow-navigating');
+			}
+			else
+			{
+				tmpWrapper[0].classList.remove('pict-flow-navigating');
+			}
+		}
+	}
+
+	/**
+	 * Resolve the effective content frame: ViewState wins, then the option.
+	 * @returns {Object|null}
+	 */
+	_resolveFrame()
+	{
+		let tmpFrame = (this._FlowData && this._FlowData.ViewState && this._FlowData.ViewState.Frame)
+			? this._FlowData.ViewState.Frame
+			: this.options.Frame;
+		return (tmpFrame && typeof tmpFrame === 'object') ? tmpFrame : null;
+	}
+
+	/**
+	 * Set (or clear, with false) the content frame and repaint it. Stored on
+	 * ViewState so it travels with the flow data.
+	 * @param {Object|false} pFrame
+	 */
+	setFrame(pFrame)
+	{
+		this._FlowData.ViewState.Frame = (pFrame && typeof pFrame === 'object') ? pFrame : null;
+		this._applyFrame();
+		return this._FlowData.ViewState.Frame;
+	}
+
+	/**
+	 * Read the effective content frame (ViewState wins, then the option), or null
+	 * when none is set. The public read counterpart to setFrame.
+	 * @returns {Object|null}
+	 */
+	getFrame()
+	{
+		return this._resolveFrame();
+	}
+
+	/**
+	 * Toggle the content frame's drag handles at runtime (e.g. an editor turning on
+	 * "set the view area"). Repaints the frame so the handles appear / disappear.
+	 * @param {boolean} pEnabled
+	 * @returns {boolean}
+	 */
+	setFrameEditing(pEnabled)
+	{
+		this.options.EnableFrameEditing = !!pEnabled;
+		this._applyFrame();
+		return this.options.EnableFrameEditing;
+	}
+
+	/**
+	 * Draw, update, or remove the content-frame rectangle inside the viewport
+	 * group (behind the content layers). No-op until the viewport exists.
+	 */
+	_applyFrame()
+	{
+		if (!this._ViewportElement) return;
+
+		let tmpId = `Flow-Frame-${this.options.ViewIdentifier}`;
+		let tmpExisting = this._ViewportElement.querySelector(`#${tmpId}`);
+		let tmpFrame = this._resolveFrame();
+
+		if (!tmpFrame || tmpFrame.Enabled === false || !tmpFrame.Width || !tmpFrame.Height)
+		{
+			if (tmpExisting) tmpExisting.remove();
+			return;
+		}
+
+		let tmpRect = tmpExisting;
+		if (!tmpRect)
+		{
+			tmpRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+			tmpRect.setAttribute('id', tmpId);
+			tmpRect.setAttribute('class', 'pict-flow-frame');
+			// First child of the viewport group: behind connections and nodes.
+			this._ViewportElement.insertBefore(tmpRect, this._ViewportElement.firstChild);
+		}
+		tmpRect.setAttribute('x', tmpFrame.X || 0);
+		tmpRect.setAttribute('y', tmpFrame.Y || 0);
+		tmpRect.setAttribute('width', tmpFrame.Width);
+		tmpRect.setAttribute('height', tmpFrame.Height);
+
+		this._applyFrameHandles(tmpFrame);
+	}
+
+	/**
+	 * Draw, refresh, or remove the content frame's drag handles. Shown only when
+	 * EnableFrameEditing is on and the view is editable: four edge handles (set top /
+	 * width / height) and a move handle at the top-left. Rendered on top of the content
+	 * (appended last in the viewport) so they are grabbable; their data-element-type routes
+	 * pointer-down to the InteractionManager's frame edit paths.
+	 * @param {Object} pFrame - the resolved frame ({X,Y,Width,Height})
+	 */
+	_applyFrameHandles(pFrame)
+	{
+		if (!this._ViewportElement) return;
+
+		let tmpId = `Flow-FrameHandles-${this.options.ViewIdentifier}`;
+		let tmpExisting = this._ViewportElement.querySelector(`#${tmpId}`);
+		if (tmpExisting) tmpExisting.remove();
+
+		let tmpEditable = this.options.EnableFrameEditing
+			&& !(typeof this.isReadOnly === 'function' && this.isReadOnly())
+			&& pFrame && pFrame.Width && pFrame.Height;
+		if (!tmpEditable) return;
+
+		let tmpX = pFrame.X || 0;
+		let tmpY = pFrame.Y || 0;
+		let tmpW = pFrame.Width;
+		let tmpH = pFrame.Height;
+		let tmpSize = 12;
+
+		let tmpGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+		tmpGroup.setAttribute('id', tmpId);
+		tmpGroup.setAttribute('class', 'pict-flow-frame-handles');
+
+		let tmpHandles =
+		[
+			{ Edge: 'n', Type: 'frame-resize', CX: tmpX + tmpW / 2, CY: tmpY },
+			{ Edge: 's', Type: 'frame-resize', CX: tmpX + tmpW / 2, CY: tmpY + tmpH },
+			{ Edge: 'e', Type: 'frame-resize', CX: tmpX + tmpW, CY: tmpY + tmpH / 2 },
+			{ Edge: 'w', Type: 'frame-resize', CX: tmpX, CY: tmpY + tmpH / 2 },
+			{ Edge: 'move', Type: 'frame-move', CX: tmpX, CY: tmpY }
+		];
+		for (let i = 0; i < tmpHandles.length; i++)
+		{
+			let tmpHandle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+			tmpHandle.setAttribute('class', 'pict-flow-frame-handle pict-flow-frame-handle-' + tmpHandles[i].Edge);
+			tmpHandle.setAttribute('x', String(tmpHandles[i].CX - tmpSize / 2));
+			tmpHandle.setAttribute('y', String(tmpHandles[i].CY - tmpSize / 2));
+			tmpHandle.setAttribute('width', String(tmpSize));
+			tmpHandle.setAttribute('height', String(tmpSize));
+			tmpHandle.setAttribute('rx', '2');
+			tmpHandle.setAttribute('data-element-type', tmpHandles[i].Type);
+			if (tmpHandles[i].Edge !== 'move')
+			{
+				tmpHandle.setAttribute('data-frame-edge', tmpHandles[i].Edge);
+			}
+			tmpGroup.appendChild(tmpHandle);
+		}
+		this._ViewportElement.appendChild(tmpGroup);
+	}
+
+	/**
+	 * Fit the viewport to the content frame (zoom + pan so it fills the view).
+	 * @returns {boolean}
+	 */
+	fitToFrame()
+	{
+		return this._ViewportManager ? this._ViewportManager.fitToFrame(this._resolveFrame()) : false;
+	}
+
+	/**
+	 * Fit the viewport so the content frame's WIDTH fills the view (anchored top-left + an
+	 * optional top margin), letting content bleed past and vertical overflow scroll. This is
+	 * the presentation fit a jumbotron / background board uses; fitToFrame() contains instead.
+	 * @param {Object} [pOptions] - { TopMargin }
+	 * @returns {boolean}
+	 */
+	fitToWidth(pOptions)
+	{
+		if (!this._ViewportManager) return false;
+		let tmpOptions = pOptions || {};
+		if (typeof tmpOptions.TopMargin !== 'number')
+		{
+			tmpOptions = { TopMargin: this.options.FitTopMargin || 0 };
+		}
+		return this._ViewportManager.fitToFrameWidth(this._resolveFrame(), tmpOptions);
+	}
+
+	/**
+	 * When FitMode is 'width', fit the frame to the container width now and keep it fit as the
+	 * container resizes (a ResizeObserver, the documented exception to the no-listener rule).
+	 * No-op without a frame or when FitMode is not 'width'.
+	 */
+	_setupFitObserver()
+	{
+		if (this.options.FitMode !== 'width' || !this._resolveFrame())
+		{
+			// Not width-fit (e.g. switched back to 'contain'): drop any observer we
+			// installed so a stale ResizeObserver does not keep re-fitting the canvas.
+			this._teardownFitObserver();
+			return;
+		}
+		this.fitToWidth();
+		if ((typeof ResizeObserver !== 'undefined') && this._SVGElement)
+		{
+			// (Re)observe the CURRENT SVG element. A re-render (e.g. a host toggling presentation mode)
+			// can replace the SVG, which would leave a previously-installed observer watching a stale,
+			// detached node — so re-point it whenever the observed element has changed.
+			if (this._FitObserver && this._FitObservedElement === this._SVGElement) { return; }
+			this._teardownFitObserver();
+			let tmpSelf = this;
+			this._FitObserver = new ResizeObserver(function () { tmpSelf.fitToWidth(); });
+			this._FitObserver.observe(this._SVGElement);
+			this._FitObservedElement = this._SVGElement;
+		}
+	}
+
+	/**
+	 * Disconnect the width-fit ResizeObserver, if one is installed. Called when a
+	 * consumer leaves 'width' FitMode (e.g. a moodboard switching back to canvas)
+	 * so the observer stops firing. Safe to call when no observer exists.
+	 */
+	_teardownFitObserver()
+	{
+		if (this._FitObserver)
+		{
+			this._FitObserver.disconnect();
+			this._FitObserver = null;
+		}
+		this._FitObservedElement = null;
 	}
 
 	_instantiateServices()
@@ -502,11 +1031,23 @@ class PictViewFlow extends libPictView
 		}
 		this._SVGElement = tmpSVGElements[0];
 
+		// Paint a configured background (no-op when none is set; template grid stands).
+		this._applyBackground();
+
+		// Reflect read-only mode on the container (drives chrome-hiding CSS).
+		this._applyReadOnlyClass();
+
+		// Set the initial canvas cursor from the (idle) state + current mode.
+		if (this._CursorManager) { this._CursorManager.update(); }
+
 		let tmpViewportElements = this.pict.ContentAssignment.getElement(`#Flow-Viewport-${tmpViewIdentifier}`);
 		if (tmpViewportElements.length > 0)
 		{
 			this._ViewportElement = tmpViewportElements[0];
 		}
+
+		// Draw the content frame, if configured (needs the viewport <g>).
+		this._applyFrame();
 
 		let tmpNodesElements = this.pict.ContentAssignment.getElement(`#Flow-Nodes-${tmpViewIdentifier}`);
 		if (tmpNodesElements.length > 0)
@@ -596,6 +1137,8 @@ class PictViewFlow extends libPictView
 		this._NodeView = this.fable.instantiateServiceProviderWithoutRegistration('PictViewFlowNode',
 			Object.assign({}, libPictViewFlowNode.default_configuration, tmpNodeViewOptions));
 		this._NodeView._FlowView = this;
+		// The default renderable renderer. Non-card renderers register alongside it.
+		this._RenderableRenderers['card'] = this._NodeView;
 
 		// Setup the properties panel renderer
 		this._PropertiesPanelView = this.fable.instantiateServiceProviderWithoutRegistration('PictViewFlowPropertiesPanel',
@@ -622,7 +1165,44 @@ class PictViewFlow extends libPictView
 
 		// Render the initial flow
 		this.renderFlow();
+
+		// Optionally snap to the default saved layout once the graph is drawn. A host with an async
+		// LayoutStorage that resolves later should call applyDefaultLayout() from its load callback.
+		if (this.options.ApplyDefaultLayoutOnLoad && this._LayoutProvider && this._LayoutProvider.getDefaultLayout())
+		{
+			this._LayoutProvider.applyDefaultLayout();
+		}
+
+		// Presentation fit. FitMode 'width' fits the frame to the container width now and on
+		// resize; otherwise honor a frame's legacy FitOnLoad (contain). Both need the SVG sized,
+		// so this runs after the initial render.
+		if (this.options.FitMode === 'width')
+		{
+			this._setupFitObserver();
+		}
+		else
+		{
+			let tmpFrame = this._resolveFrame();
+			if (tmpFrame && tmpFrame.FitOnLoad)
+			{
+				this.fitToFrame();
+			}
+		}
 	}
+
+	// ---- Saved-layout delegations ----
+	// A clean view-level API over the layout provider for saving, restoring, and
+	// choosing a default arrangement of the same graph. The toolbar uses the
+	// provider directly; these are additive.
+
+	saveLayout(pName) { return this._LayoutProvider ? this._LayoutProvider.saveLayout(pName) : null; }
+	restoreLayout(pHash) { return this._LayoutProvider ? this._LayoutProvider.restoreLayout(pHash) : false; }
+	applyLayout(pHash) { return this.restoreLayout(pHash); }
+	deleteLayout(pHash) { return this._LayoutProvider ? this._LayoutProvider.deleteLayout(pHash) : false; }
+	getLayouts() { return this._LayoutProvider ? this._LayoutProvider.getLayouts() : []; }
+	setDefaultLayout(pHash) { return this._LayoutProvider ? this._LayoutProvider.setDefaultLayout(pHash) : false; }
+	getDefaultLayout() { return this._LayoutProvider ? this._LayoutProvider.getDefaultLayout() : null; }
+	applyDefaultLayout() { return this._LayoutProvider ? this._LayoutProvider.applyDefaultLayout() : false; }
 
 	// ---- Data Manager Delegations ----
 
@@ -1587,4 +2167,13 @@ class PictViewFlow extends libPictView
 
 module.exports = PictViewFlow;
 
-module.exports.default_configuration = _DefaultConfiguration;
+// default_configuration is intentionally NOT exported. Pict's addView merges a
+// view's default_configuration UNDER the host's options, which would make those
+// now-explicit defaults override Profile values. Defaults are applied inside the
+// constructor via mergeProfileOptions (defaults < profile < host) so Profile
+// works as a real config knob. Inspect resolved defaults with
+// PictViewFlow.mergeProfileOptions({}).
+
+// Config profiles (graph/whiteboard/moodboard/presentation/erd), exposed so
+// consumers can inspect or extend them.
+module.exports.Profiles = _PROFILES;

@@ -1,5 +1,5 @@
 const libFableServiceProviderBase = require('fable-serviceproviderbase');
-const libPerimeterMath = require('../providers/edges/Edge-PerimeterMath.js');
+const libPerimeterMath = require('pict-provider-graphlayout').Edges.PerimeterMath;
 
 // Chip (port-label badge) geometry — must mirror PortRenderer's badge
 // dimensions exactly so hint paths land on the chip's actual outer

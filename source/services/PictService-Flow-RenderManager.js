@@ -96,7 +96,15 @@ class PictServiceFlowRenderManager extends libFableServiceProviderBase
 				}
 			}
 
-			this._FlowView._NodeView.renderNode(tmpNode, this._FlowView._NodesLayer, tmpIsSelected, tmpNodeTypeConfig);
+			// Dispatch through the renderable-renderer registry. The default
+			// 'card' renderer is the node view, so existing diagrams (and
+			// ultravisor) render identically; a node type can name a different
+			// renderer via its RenderableType field. Fall back to the node view
+			// directly when no registry is present (e.g. a minimal test harness).
+			let tmpRenderer = (typeof this._FlowView.resolveRenderableRenderer === 'function')
+				? this._FlowView.resolveRenderableRenderer(tmpNode, tmpNodeTypeConfig)
+				: this._FlowView._NodeView;
+			tmpRenderer.renderNode(tmpNode, this._FlowView._NodesLayer, tmpIsSelected, tmpNodeTypeConfig);
 		}
 
 		// Render properties panels and tethers
